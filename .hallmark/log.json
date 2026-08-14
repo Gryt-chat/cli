@@ -1,0 +1,9 @@
+[
+  {
+    "date": "2026-08-14",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "brief": "Keyboard-first TUI for creating and operating Gryt servers"
+  }
+]
