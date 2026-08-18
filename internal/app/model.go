@@ -6,10 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"net/http"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Gryt-chat/cli/internal/config"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
+	"github.com/Gryt-chat/cli/internal/updater"
 )
 
 type mode int
@@ -35,6 +38,14 @@ type logsLoaded struct {
 	err     error
 }
 
+// A newer release exists. Sent once at startup and never again, so the dashboard
+// does not poll while it sits open.
+type updateFound struct{ tag string }
+type updateApplied struct {
+	tag string
+	err error
+}
+
 type Model struct {
 	store    *config.Store
 	runtime  gruntime.Manager
@@ -50,13 +61,54 @@ type Model struct {
 	busy     bool
 	notice   string
 	err      string
+	version  string
+	// Set when a newer release exists, which is what turns on the u key.
+	updateTag string
+	updating  bool
 }
 
-func New(store *config.Store, manager gruntime.Manager) Model {
-	return Model{store: store, runtime: manager, styles: newStyles(), states: map[string]gruntime.State{}, width: 100, height: 30}
+func New(store *config.Store, manager gruntime.Manager, version string) Model {
+	return Model{store: store, runtime: manager, styles: newStyles(), states: map[string]gruntime.State{}, width: 100, height: 30, version: version}
 }
 
-func (m Model) Init() tea.Cmd { return m.loadProfiles() }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.loadProfiles(), m.checkForUpdate()) }
+
+// checkForUpdate asks GitHub which release is newest, once, at startup.
+//
+// It fails silently. Somebody managing a server on a machine with no route to
+// the internet should see their servers, not an error about a version check
+// they did not ask for.
+func (m Model) checkForUpdate() tea.Cmd {
+	current := m.version
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		release, err := updater.Check(ctx, http.DefaultClient)
+		if err != nil || !updater.Newer(current, release.Tag) {
+			return nil
+		}
+		return updateFound{tag: release.Tag}
+	}
+}
+
+func (m Model) applyUpdate() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		release, err := updater.Check(ctx, http.DefaultClient)
+		if err != nil {
+			return updateApplied{err: err}
+		}
+		path, err := updater.Path()
+		if err != nil {
+			return updateApplied{err: err}
+		}
+		if err := updater.Apply(ctx, http.DefaultClient, release, path); err != nil {
+			return updateApplied{err: err}
+		}
+		return updateApplied{tag: release.Tag}
+	}
+}
 
 func (m Model) loadProfiles() tea.Cmd {
 	return func() tea.Msg {
@@ -177,6 +229,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	switch msg := msg.(type) {
+	case updateFound:
+		m.updateTag = msg.tag
+	case updateApplied:
+		m.updating = false
+		if msg.err != nil {
+			m.err, m.notice = msg.err.Error(), ""
+		} else {
+			m.updateTag = ""
+			m.notice, m.err = "Updated to "+msg.tag+". Restart gryt to run it.", ""
+		}
+	}
+
 	key, isKey := msg.(tea.KeyPressMsg)
 	if m.mode == modeWizard {
 		if isKey {
@@ -256,6 +321,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			return m, m.loadLogs(profile)
 		}
+	case "u":
+		if m.updateTag == "" || m.updating {
+			return m, nil
+		}
+		m.updating, m.notice, m.err = true, "", ""
+		return m, m.applyUpdate()
 	case "g":
 		return m, m.loadStatuses()
 	}
@@ -287,7 +358,21 @@ func (m Model) header(section string) string {
 
 func (m Model) viewDashboard() string {
 	header := m.header("SERVERS")
-	footer := m.styles.footer.Width(m.width).Render("↑/↓ select   n new   e edit   s start   x stop   r restart   l logs   g refresh   q quit")
+	keys := "↑/↓ select   n new   e edit   s start   x stop   r restart   l logs   g refresh   q quit"
+	if m.updateTag != "" {
+		keys = "u update   " + keys
+	}
+	footer := m.styles.footer.Width(m.width).Render(keys)
+	banner := ""
+	if m.updating {
+		banner = m.styles.muted.Render("  Updating…")
+	} else if m.updateTag != "" {
+		banner = m.styles.accent.Render("  " + m.updateTag + " is available. Press u to update.")
+	}
+	if banner != "" {
+		header += "\n" + banner
+	}
+
 	bodyHeight := max(8, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
 	if len(m.profiles) == 0 {
 		empty := m.styles.panelActive.Width(min(66, m.width-4)).Render(m.styles.title.Render("No servers configured") + "\n\n" + m.styles.muted.Render("Press n to create a validated Gryt server profile and Docker deployment."))

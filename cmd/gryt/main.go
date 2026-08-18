@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/Gryt-chat/cli/internal/config"
 	"github.com/Gryt-chat/cli/internal/doctor"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
+	"github.com/Gryt-chat/cli/internal/updater"
 )
 
 var version = "dev"
@@ -31,6 +33,8 @@ func main() {
 		case "help", "--help", "-h":
 			printHelp()
 			return
+		case "update":
+			os.Exit(runUpdate(args[1:]))
 		case "doctor":
 			os.Exit(runDoctor(store, root))
 		case "list":
@@ -46,7 +50,7 @@ func main() {
 			fatal(fmt.Errorf("unknown command %q; run gryt help", args[0]))
 		}
 	}
-	program := tea.NewProgram(app.New(store, gruntime.Docker{}))
+	program := tea.NewProgram(app.New(store, gruntime.Docker{}, version))
 	if _, err := program.Run(); err != nil {
 		fatal(err)
 	}
@@ -54,6 +58,45 @@ func main() {
 
 // runDoctor prints every check and returns the exit code, so that a script can
 // gate on it.
+// runUpdate replaces this binary with the newest release, or with --check only
+// reports whether there is one.
+func runUpdate(args []string) int {
+	checkOnly := len(args) > 0 && (args[0] == "--check" || args[0] == "check")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	release, err := updater.Check(ctx, http.DefaultClient)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gryt: could not reach the releases API:", err)
+		return 1
+	}
+
+	if !updater.Newer(version, release.Tag) {
+		fmt.Printf("gryt %s is the newest release.\n", version)
+		return 0
+	}
+
+	if checkOnly {
+		fmt.Printf("%s is available. You have %s. Run: gryt update\n", release.Tag, version)
+		return 0
+	}
+
+	path, err := updater.Path()
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("Updating %s to %s\n", version, release.Tag)
+	if err := updater.Apply(ctx, http.DefaultClient, release, path); err != nil {
+		fmt.Fprintln(os.Stderr, "gryt:", err)
+		fmt.Fprintln(os.Stderr, "If the binary is somewhere you cannot write, re-run the installer instead:")
+		fmt.Fprintln(os.Stderr, "  curl -fsSL https://get.gryt.chat | sh")
+		return 1
+	}
+	fmt.Printf("Updated to %s\n", release.Tag)
+	return 0
+}
+
 func runDoctor(store *config.Store, root string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -123,6 +166,8 @@ func printHelp() {
 
 Usage:
   gryt                 Open the interactive server manager
+  gryt update          Replace this binary with the newest release
+  gryt update --check  Report whether a newer release exists, and change nothing
   gryt doctor          Check Docker and the config directory, and say what to fix
   gryt list            List configured local servers
   gryt env <server>    Show settings and whether they are live or restart-bound
