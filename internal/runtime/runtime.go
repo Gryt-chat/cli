@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Gryt-chat/cli/internal/config"
+	"github.com/Gryt-chat/cli/internal/doctor"
 )
 
 type State string
@@ -33,12 +34,24 @@ type Manager interface {
 
 type Docker struct{}
 
+// Available reports the first thing standing between the operator and a
+// running container.
+//
+// This used to run `docker compose version` alone, which asks the client about
+// itself and never contacts the daemon: it passes with Docker Desktop
+// installed and shut down, which on macOS is the most likely thing to be
+// wrong. The checks live in internal/doctor so that this and `gryt doctor`
+// cannot disagree.
 func (Docker) Available(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "docker", "compose", "version")
-	if err := cmd.Run(); err != nil {
-		return errors.New("Docker Compose is not available; install Docker Desktop or the Compose plugin")
+	problems := doctor.Problems(doctor.Docker(ctx, doctor.Exec))
+	if len(problems) == 0 {
+		return nil
 	}
-	return nil
+	first := problems[0]
+	if first.Fix == "" {
+		return errors.New(first.Detail)
+	}
+	return fmt.Errorf("%s. %s", first.Detail, first.Fix)
 }
 
 func (Docker) Status(ctx context.Context, profile config.Profile) State {

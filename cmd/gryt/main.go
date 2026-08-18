@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Gryt-chat/cli/internal/app"
 	"github.com/Gryt-chat/cli/internal/config"
+	"github.com/Gryt-chat/cli/internal/doctor"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
 )
 
@@ -28,6 +31,8 @@ func main() {
 		case "help", "--help", "-h":
 			printHelp()
 			return
+		case "doctor":
+			os.Exit(runDoctor(store, root))
 		case "list":
 			list(store)
 			return
@@ -45,6 +50,37 @@ func main() {
 	if _, err := program.Run(); err != nil {
 		fatal(err)
 	}
+}
+
+// runDoctor prints every check and returns the exit code, so that a script can
+// gate on it.
+func runDoctor(store *config.Store, root string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	profiles, err := store.List()
+	if err != nil {
+		fatal(err)
+	}
+
+	checks := doctor.Environment(ctx, doctor.Exec, root, profiles)
+	for _, check := range checks {
+		mark := "ok  "
+		if !check.OK {
+			mark = "FAIL"
+		}
+		fmt.Printf("%s  %-20s %s\n", mark, check.Name, check.Detail)
+	}
+
+	problems := doctor.Problems(checks)
+	if len(problems) == 0 {
+		return 0
+	}
+	fmt.Println()
+	for _, problem := range problems {
+		fmt.Printf("%s: %s\n", problem.Name, problem.Fix)
+	}
+	return 1
 }
 
 func list(store *config.Store) {
@@ -87,6 +123,7 @@ func printHelp() {
 
 Usage:
   gryt                 Open the interactive server manager
+  gryt doctor          Check Docker and the config directory, and say what to fix
   gryt list            List configured local servers
   gryt env <server>    Show settings and whether they are live or restart-bound
   gryt version         Print the CLI version
