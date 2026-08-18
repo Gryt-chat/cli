@@ -48,6 +48,34 @@ func (m Model) entries() []entry {
 	)
 }
 
+// key identifies a row for the purpose of "is this one working". A server is
+// its profile id; a shared piece is its container name.
+func (e entry) key() string {
+	if e.kind == entryServer {
+		return e.profile.ID
+	}
+	return e.container
+}
+
+// actions are the things worth offering for a row in its current state.
+//
+// Start on a running server used to be accepted, run `compose up` again, and
+// report "Start X" as though something had happened. The state decides now.
+type actions struct{ start, stop, restart bool }
+
+func availableActions(running, unknown bool) actions {
+	switch {
+	case unknown:
+		// The state could not be read, so refuse nothing: the operator may
+		// well need to start or stop it to find out.
+		return actions{start: true, stop: true, restart: true}
+	case running:
+		return actions{stop: true, restart: true}
+	default:
+		return actions{start: true}
+	}
+}
+
 func (e entry) name() string {
 	if e.kind == entryServer {
 		return e.profile.Name

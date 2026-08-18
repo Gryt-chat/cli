@@ -41,6 +41,9 @@ type statusesLoaded struct {
 type operationDone struct {
 	message string
 	err     error
+	// Which row this was for, so only that row stops working. Empty for the
+	// wizard's save, which is modal and owns the whole screen.
+	key string
 }
 
 // A refresh of logs already on screen, as opposed to opening the view.
@@ -105,6 +108,10 @@ type Model struct {
 	publicIP      string
 	publicChecked bool
 	containers    map[string]bool
+	// Which rows have an operation in flight, keyed by entry. Replaces a
+	// single busy flag that froze the whole dashboard for the length of a
+	// docker command.
+	working map[string]bool
 	// True while a refresh is in flight, so ticks do not stack up behind a
 	// slow health check.
 	refreshing bool
@@ -213,6 +220,17 @@ func sharedIsUp(ctx context.Context) bool {
 	return res.StatusCode >= 200 && res.StatusCode < 300
 }
 
+// startWork marks one row as working. Returns the model so a key handler can
+// use it inline.
+func (m Model) startWork(key string) Model {
+	if m.working == nil {
+		m.working = map[string]bool{}
+	}
+	m.working[key] = true
+	m.notice, m.err = "", ""
+	return m
+}
+
 func (m Model) saveProfile(profile config.Profile) tea.Cmd {
 	return func() tea.Msg {
 		if err := m.store.Save(profile); err != nil {
@@ -230,6 +248,7 @@ func (m Model) saveProfile(profile config.Profile) tea.Cmd {
 
 func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 	dir := m.store.ServerDir(profile.ID)
+	key := profile.ID
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
@@ -237,7 +256,7 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 		// the Manager interface from the start and never called, so the
 		// operator met a raw compose error instead of "Docker is not running".
 		if err := m.runtime.Available(ctx); err != nil {
-			return operationDone{err: err}
+			return operationDone{err: err, key: key}
 		}
 		var err error
 		switch action {
@@ -246,10 +265,10 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 			// it has to exist and be running before a server that expects to
 			// reach it comes up.
 			if _, err := m.store.WriteSharedCompose(); err != nil {
-				return operationDone{err: err}
+				return operationDone{err: err, key: key}
 			}
 			if err := m.runtime.EnsureShared(ctx, m.store.SharedDir()); err != nil {
-				return operationDone{err: fmt.Errorf("starting the shared SFU: %w", err)}
+				return operationDone{err: fmt.Errorf("starting the shared SFU: %w", err), key: key}
 			}
 			err = m.runtime.Start(ctx, profile, dir)
 		case "stop":
@@ -258,9 +277,9 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 			err = m.runtime.Restart(ctx, profile, dir)
 		}
 		if err != nil {
-			return operationDone{err: err}
+			return operationDone{err: err, key: key}
 		}
-		return operationDone{message: fmt.Sprintf("%s %s", strings.Title(action), profile.Name)}
+		return operationDone{message: fmt.Sprintf("%s %s", strings.Title(action), profile.Name), key: key}
 	}
 }
 
@@ -292,30 +311,30 @@ func (m Model) followContainerLogs(name string) tea.Cmd {
 	}
 }
 
-func (m Model) startShared() tea.Cmd {
+func (m Model) startShared(key string) tea.Cmd {
 	dir := m.store.SharedDir()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if _, err := m.store.WriteSharedCompose(); err != nil {
-			return operationDone{err: err}
+			return operationDone{err: err, key: key}
 		}
 		if err := m.runtime.EnsureShared(ctx, dir); err != nil {
-			return operationDone{err: err}
+			return operationDone{err: err, key: key}
 		}
-		return operationDone{message: "Started the shared services"}
+		return operationDone{message: "Started the shared services", key: key}
 	}
 }
 
-func (m Model) stopShared(label string) tea.Cmd {
+func (m Model) stopShared(key, label string) tea.Cmd {
 	dir := m.store.SharedDir()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := m.runtime.StopShared(ctx, dir); err != nil {
-			return operationDone{err: err}
+			return operationDone{err: err, key: key}
 		}
-		return operationDone{message: "Stopped " + label + " — voice and uploads are down for every server here"}
+		return operationDone{message: "Stopped " + label + " — voice and uploads are down for every server here", key: key}
 	}
 }
 
@@ -385,6 +404,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sharedUp = msg.sharedUp
 	case operationDone:
 		m.busy = false
+		if msg.key != "" {
+			delete(m.working, msg.key)
+		}
 		if m.mode == modeWizard {
 			if msg.err != nil {
 				// Back to the step, with the reason, rather than to a
@@ -481,11 +503,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !isKey {
 		return m, nil
 	}
-	if m.busy && key.String() != "ctrl+c" {
-		return m, nil
-	}
-
+	// No global lock. The work already runs in goroutines, so navigation,
+	// enter, logs and quit stay live while a server starts; only a second
+	// action on a row already working is refused, below.
 	profile, hasProfile := m.selectedProfile()
+	selected, hasSelected := m.selectedEntry()
+	can := actions{}
+	busyHere := false
+	if hasSelected {
+		_, word, _ := m.entryState(selected)
+		can = availableActions(word == "running", word == "unknown")
+		busyHere = m.working[selected.key()]
+	}
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -506,30 +535,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.wizard.focus()
 		}
 	case "s":
-		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
-			m.busy = true
-			return m, m.startShared()
+		if !can.start || busyHere {
+			return m, nil
+		}
+		if hasSelected && selected.kind == entryShared {
+			return m.startWork(selected.key()), m.startShared(selected.key())
 		}
 		if hasProfile {
-			m.busy = true
-			return m, m.runOperation("start", profile)
+			return m.startWork(profile.ID), m.runOperation("start", profile)
 		}
 	case "x":
-		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
+		if !can.stop || busyHere {
+			return m, nil
+		}
+		if hasSelected && selected.kind == entryShared {
 			// Consequential in a way a per-server stop is not: one of these
 			// serves every server on the machine, so say what it costs rather
 			// than reporting it like any other stop.
-			m.busy = true
-			return m, m.stopShared(selected.label)
+			return m.startWork(selected.key()), m.stopShared(selected.key(), selected.label)
 		}
 		if hasProfile {
-			m.busy = true
-			return m, m.runOperation("stop", profile)
+			return m.startWork(profile.ID), m.runOperation("stop", profile)
 		}
 	case "r":
+		if !can.restart || busyHere {
+			return m, nil
+		}
 		if hasProfile {
-			m.busy = true
-			return m, m.runOperation("restart", profile)
+			return m.startWork(profile.ID), m.runOperation("restart", profile)
 		}
 	case "enter":
 		if !hasProfile {
@@ -548,7 +581,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.followContainerLogs(selected.container)
 		}
 		if hasProfile {
-			m.busy = true
 			return m, m.loadLogs(profile)
 		}
 	case "u":
@@ -667,11 +699,7 @@ func (m Model) viewDashboard() string {
 	}
 	head := m.header(summary)
 
-	keys := "↑/↓ select   enter details   s start   x stop   r restart   l logs   e edit   n new   q quit"
-	if m.updateTag != "" {
-		keys = "u update   " + keys
-	}
-	footer := m.styles.footer.Width(m.width).Render(" " + keys)
+	footer := m.styles.footer.Width(m.width).Render(" " + m.dashboardKeys())
 
 	if len(m.profiles) == 0 {
 		empty := m.styles.title.Render("No servers yet") + "\n\n" +
@@ -834,6 +862,11 @@ func (m Model) viewDetail() string {
 
 // entryState answers for either kind of row.
 func (m Model) entryState(item entry) (glyph, word string, tone lipgloss.Style) {
+	// Shown on the row rather than as one banner, so several servers starting
+	// at once are each visible doing it.
+	if m.working[item.key()] {
+		return "◐", "working", m.styles.accent
+	}
 	if item.kind == entryServer {
 		return m.stateOf(item.profile)
 	}
@@ -841,6 +874,46 @@ func (m Model) entryState(item entry) (glyph, word string, tone lipgloss.Style) 
 		return "●", "running", m.styles.success
 	}
 	return "○", "stopped", m.styles.muted
+}
+
+// dashboardKeys lists what the selected row can actually do.
+//
+// It used to list every key regardless, so start was offered on a running
+// server and stop on a stopped one — and pressing either reported success
+// without anything having happened.
+func (m Model) dashboardKeys() string {
+	parts := []string{"↑/↓ select"}
+
+	if selected, ok := m.selectedEntry(); ok {
+		_, word, _ := m.entryState(selected)
+		if m.working[selected.key()] {
+			parts = append(parts, m.styles.accent.Render("working…"))
+		} else {
+			can := availableActions(word == "running", word == "unknown")
+			if selected.kind == entryServer {
+				parts = append(parts, "enter details")
+			}
+			if can.start {
+				parts = append(parts, "s start")
+			}
+			if can.stop {
+				parts = append(parts, "x stop")
+			}
+			if can.restart && selected.kind == entryServer {
+				parts = append(parts, "r restart")
+			}
+			parts = append(parts, "l logs")
+			if selected.kind == entryServer {
+				parts = append(parts, "e edit")
+			}
+		}
+	}
+
+	parts = append(parts, "n new", "q quit")
+	if m.updateTag != "" {
+		parts = append([]string{"u update"}, parts...)
+	}
+	return strings.Join(parts, "   ")
 }
 
 // stateOf pairs every status with a glyph as well as a colour, so the fact
