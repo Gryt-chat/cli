@@ -39,10 +39,31 @@ type operationDone struct {
 	message string
 	err     error
 }
+
+// A refresh of logs already on screen, as opposed to opening the view.
+type logsFollowed struct{ content string }
+
 type logsLoaded struct {
 	profile string
 	content string
 	err     error
+}
+
+// tick drives the dashboard's own refresh. Without it the status was whatever
+// it had been when you last pressed g, so a server that fell over looked fine
+// until you thought to ask.
+type tick time.Time
+
+const (
+	// Slow enough that a machine with several servers is not doing constant
+	// health checks, quick enough that the panel is not lying for long.
+	statusInterval = 5 * time.Second
+	// Logs are a page somebody is actively watching, so they follow faster.
+	logInterval = 2 * time.Second
+)
+
+func tickAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return tick(t) })
 }
 
 // A newer release exists. Sent once at startup and never again, so the dashboard
@@ -73,13 +94,18 @@ type Model struct {
 	updateTag string
 	updating  bool
 	sharedUp  bool
+	// True while a refresh is in flight, so ticks do not stack up behind a
+	// slow health check.
+	refreshing bool
 }
 
 func New(store *config.Store, manager gruntime.Manager, version string) Model {
 	return Model{store: store, runtime: manager, styles: newStyles(), states: map[string]gruntime.State{}, width: 100, height: 30, version: version}
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadProfiles(), m.checkForUpdate()) }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.loadProfiles(), m.checkForUpdate(), tickAfter(statusInterval))
+}
 
 // checkForUpdate asks GitHub which release is newest, once, at startup.
 //
@@ -206,6 +232,22 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 	}
 }
 
+// followLogs is loadLogs without the side effects of opening the view: it
+// refreshes what is already on screen and stays quiet when it cannot, so a
+// container that goes away mid-follow does not replace the logs with an error.
+func (m Model) followLogs(profile config.Profile) tea.Cmd {
+	dir := m.store.ServerDir(profile.ID)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		logs, err := m.runtime.Logs(ctx, profile, dir, 120)
+		if err != nil {
+			return logsFollowed{}
+		}
+		return logsFollowed{content: logs}
+	}
+}
+
 func (m Model) loadLogs(profile config.Profile) tea.Cmd {
 	dir := m.store.ServerDir(profile.ID)
 	return func() tea.Msg {
@@ -241,7 +283,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = max(0, len(m.profiles)-1)
 		}
 		return m, m.loadStatuses()
+	case tick:
+		// One refresh in flight at a time. A slow health check must not stack
+		// up behind itself, and an operation already reloads when it finishes.
+		if m.busy || m.refreshing {
+			return m, tickAfter(statusInterval)
+		}
+		if m.mode == modeLogs {
+			if profile, ok := m.selectedProfile(); ok {
+				m.refreshing = true
+				return m, tea.Batch(m.followLogs(profile), tickAfter(logInterval))
+			}
+			return m, tickAfter(logInterval)
+		}
+		if m.mode == modeDashboard && len(m.profiles) > 0 {
+			m.refreshing = true
+			return m, tea.Batch(m.loadStatuses(), tickAfter(statusInterval))
+		}
+		return m, tickAfter(statusInterval)
+
 	case statusesLoaded:
+		m.refreshing = false
 		m.states = msg.states
 		m.sharedUp = msg.sharedUp
 	case operationDone:
@@ -252,6 +314,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice, m.err = msg.message, ""
 		}
 		return m, tea.Batch(m.loadProfiles(), tea.Tick(800*time.Millisecond, func(time.Time) tea.Msg { return statusesLoaded{states: m.states} }))
+	case logsFollowed:
+		m.refreshing = false
+		if msg.content != "" {
+			m.logs = msg.content
+		}
+
 	case logsLoaded:
 		m.busy = false
 		if msg.err != nil {
