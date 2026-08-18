@@ -54,7 +54,12 @@ type Profile struct {
 	StorageBackend   string        `json:"storageBackend"`
 	// Signs this server's session tokens. Generated once and kept, because
 	// rotating it signs everybody out.
-	JWTSecret string            `json:"jwtSecret,omitempty"`
+	JWTSecret string `json:"jwtSecret,omitempty"`
+	// Filled in when the server uses this machine's shared object store, so
+	// the generated files can name its credentials. Deliberately not
+	// persisted: the shared secrets file owns them, and copying them into
+	// every profile would mean rotating them in several places.
+	SharedS3  *SharedSecrets    `json:"-"`
 	ExtraEnv  map[string]string `json:"extraEnv,omitempty"`
 	CreatedAt time.Time         `json:"createdAt"`
 	UpdatedAt time.Time         `json:"updatedAt"`
@@ -70,7 +75,7 @@ func NewProfile(name string) Profile {
 		Security:       SecurityBalanced,
 		DataDir:        "/data",
 		VoiceMaxUsers:  0,
-		StorageBackend: "filesystem",
+		StorageBackend: SharedStorage,
 		JWTSecret:      NewSecret(),
 		ExtraEnv:       map[string]string{},
 		CreatedAt:      now,
@@ -123,8 +128,10 @@ func (p Profile) Validate() error {
 	if p.TrustedProxyHops < 0 || p.TrustedProxyHops > 16 {
 		return errors.New("trusted proxy hops must be between 0 and 16")
 	}
-	if p.StorageBackend != "filesystem" && p.StorageBackend != "s3" {
-		return errors.New("storage backend must be filesystem or s3")
+	// "shared" is this machine's own object store. The server never sees that
+	// word: EnvSettings maps it to s3 and points it at the store next door.
+	if p.StorageBackend != "filesystem" && p.StorageBackend != "s3" && p.StorageBackend != SharedStorage {
+		return errors.New("storage backend must be shared, filesystem or s3")
 	}
 	return nil
 }
