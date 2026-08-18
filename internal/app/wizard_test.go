@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -346,5 +347,148 @@ func TestStartingAServerBringsUpTheSharedStack(t *testing.T) {
 	}
 	if fake.States[profile.ID] != gruntime.StateRunning {
 		t.Fatal("the server itself was not started")
+	}
+}
+
+// Focusing a field that has no text input panicked: a tick-list is built as a
+// bare struct, so its textinput is the zero value. The wizard died on the way
+// into the step rather than while drawing it, which is why rendering it in
+// isolation looked fine.
+func TestFocusingEveryStepDoesNotPanic(t *testing.T) {
+	w := newWizard(nil)
+	set(t, &w, "storage", "s3")
+	for _, step := range w.visible() {
+		w.step = step
+		w.focus()
+	}
+}
+
+func tick(t *testing.T, w *wizard, label string) {
+	t.Helper()
+	field := &w.fields[indexOf(t, *w, "reach")]
+	for i := range field.options {
+		if strings.Contains(field.options[i].label, label) {
+			field.options[i].chosen = true
+			return
+		}
+	}
+	t.Fatalf("no reach option matching %q", label)
+}
+
+func TestReachOffersLocalhostAndTheMachinesAddresses(t *testing.T) {
+	w := newWizard(nil)
+	options := w.fields[indexOf(t, w, "reach")].options
+
+	if len(options) < 2 {
+		t.Fatal("reach should offer at least localhost and a way to type an address")
+	}
+	if !options[0].chosen {
+		t.Fatal("localhost should start ticked, so the wizard has a working answer by default")
+	}
+	if options[len(options)-1].value != domainChoice {
+		t.Fatal("the last option should be the one that reveals a field to type into")
+	}
+	for _, address := range config.LocalAddresses() {
+		found := false
+		for _, option := range options {
+			if strings.Contains(option.value, address.IP) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s is an address of this machine and was not offered", address.IP)
+		}
+	}
+}
+
+// SFU_PUBLIC_HOST takes a list; the client pings each and uses the fastest. So
+// ticking more than one is the point, not a contradiction.
+func TestTickedRoutesBecomeACommaSeparatedPublicHost(t *testing.T) {
+	w := newWizard(nil)
+	set(t, &w, "name", "My Server")
+
+	addresses := config.LocalAddresses()
+	if len(addresses) == 0 {
+		t.Skip("no non-virtual addresses on this machine to tick")
+	}
+	tick(t, &w, addresses[0].IP)
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(profile.SFUWebSocketURL, ",")
+	if len(parts) != 2 {
+		t.Fatalf("expected localhost and one address, got %q", profile.SFUWebSocketURL)
+	}
+	if !strings.Contains(profile.SFUWebSocketURL, addresses[0].IP) {
+		t.Fatalf("the ticked address is missing from %q", profile.SFUWebSocketURL)
+	}
+}
+
+// The domain option is a marker, not an endpoint. It must never reach the file.
+func TestTheTypedAddressReplacesItsMarker(t *testing.T) {
+	w := newWizard(nil)
+	set(t, &w, "name", "My Server")
+	tick(t, &w, "domain or address")
+	set(t, &w, "domain", "wss://voice.example.com")
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(profile.SFUWebSocketURL, domainChoice) {
+		t.Fatalf("the marker leaked into the configuration: %q", profile.SFUWebSocketURL)
+	}
+	if !strings.Contains(profile.SFUWebSocketURL, "wss://voice.example.com") {
+		t.Fatalf("the typed address is missing from %q", profile.SFUWebSocketURL)
+	}
+}
+
+func TestReachAndDomainAreValidated(t *testing.T) {
+	w := newWizard(nil)
+	field := &w.fields[indexOf(t, w, "reach")]
+	for i := range field.options {
+		field.options[i].chosen = false
+	}
+	w.step = indexOf(t, w, "reach")
+	if err := w.validateStep(); err == nil {
+		t.Fatal("ticking nothing should not validate")
+	}
+
+	tick(t, &w, "domain or address")
+	w.step = indexOf(t, w, "domain")
+	set(t, &w, "domain", "voice.example.com")
+	if err := w.validateStep(); err == nil {
+		t.Fatal("an address without a scheme should not validate")
+	}
+	set(t, &w, "domain", "wss://voice.example.com")
+	if err := w.validateStep(); err != nil {
+		t.Fatalf("a valid address was rejected: %v", err)
+	}
+}
+
+// Editing has to put the ticks back, including one that came from the typed
+// field rather than from this machine's own addresses.
+func TestEditingRestoresTheTicksAndTheTypedAddress(t *testing.T) {
+	existing := config.NewProfile("My Server")
+	existing.SFUWebSocketURL = "ws://localhost:5005,wss://voice.example.com"
+
+	w := wizardFromProfile(existing)
+	field := w.fields[indexOf(t, w, "reach")]
+
+	if !field.options[0].chosen {
+		t.Fatal("localhost was not ticked back")
+	}
+	if !field.options[len(field.options)-1].chosen {
+		t.Fatal("the typed-address option was not ticked back")
+	}
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.SFUWebSocketURL != existing.SFUWebSocketURL {
+		t.Fatalf("a round trip changed it: %q became %q", existing.SFUWebSocketURL, profile.SFUWebSocketURL)
 	}
 }

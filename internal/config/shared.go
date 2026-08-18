@@ -75,6 +75,10 @@ services:
       # and nothing to run out of.
       ICE_UDP_MUX_PORT: "` + strconv.Itoa(SFUMuxPort) + `"
       STUN_SERVERS: "` + DefaultSTUN + `"
+      # Every address this machine answers on, so a client can find a path to
+      # it. Derived from the interfaces at write time rather than asked about,
+      # because it describes the machine and not any one server.
+      ICE_ADVERTISE_IP: "` + AdvertiseIPs() + `"
     networks:
       - ` + SharedNetwork + `
     restart: unless-stopped

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Gryt-chat/cli/internal/config"
 )
+
+// A choice somebody can tick in a multi-select. The label is what they read,
+// the value is what ends up in the configuration.
+type multiOption struct {
+	label, value string
+	chosen       bool
+}
 
 type wizardField struct {
 	key, label, helper string
@@ -21,6 +29,11 @@ type wizardField struct {
 	// What an empty field means. Shown as the placeholder and used when the
 	// field is left alone, so a default is never text you have to delete.
 	fallback string
+	// Set for a tick-list. Some questions have more than one right answer at
+	// the same time: a server reachable over a LAN and over the internet is
+	// reachable over both, and the client picks whichever is faster.
+	options []multiOption
+	cursor  int
 }
 
 type wizard struct {
@@ -57,6 +70,40 @@ func inputField(key, label, helper, fallback, placeholder string) wizardField {
 	return wizardField{key: key, label: label, helper: helper, input: input, fallback: fallback}
 }
 
+// reachField asks where people will connect from, offering this machine's own
+// addresses rather than an empty box.
+//
+// It replaces a free-text "SFU WebSocket URL" with a `wss://…` placeholder,
+// which nobody who did not already know the answer could fill in, and getting
+// it wrong is how voice silently fails. The answers become SFU_PUBLIC_HOST,
+// which takes a comma-separated list: the client pings each and uses whichever
+// answers fastest, so ticking both a LAN address and a public one is a
+// sensible thing to do rather than a contradiction.
+func reachField() wizardField {
+	options := []multiOption{{
+		label:  "This machine only (localhost)",
+		value:  "ws://localhost:" + strconv.Itoa(config.SFUPort),
+		chosen: true,
+	}}
+	for _, address := range config.LocalAddresses() {
+		options = append(options, multiOption{
+			label: address.IP + "  (" + address.Label + ")",
+			value: "ws://" + address.IP + ":" + strconv.Itoa(config.SFUPort),
+		})
+	}
+	options = append(options, multiOption{label: "A domain or address I will type", value: domainChoice})
+	return wizardField{
+		key:     "reach",
+		label:   "Where will people connect from?",
+		helper:  "Space ticks, ↑/↓ moves. Tick every route that applies; clients use whichever answers fastest.",
+		options: options,
+	}
+}
+
+// domainChoice is a marker rather than an endpoint: ticking it reveals a field
+// to type the real one into.
+const domainChoice = "ask"
+
 func selectField(key, label, helper string, choices []string, current int) wizardField {
 	return wizardField{key: key, label: label, helper: helper, choices: choices, choice: current}
 }
@@ -76,6 +123,15 @@ func masked(field wizardField) wizardField {
 }
 
 func (f wizardField) value() string {
+	if len(f.options) > 0 {
+		var chosen []string
+		for _, option := range f.options {
+			if option.chosen {
+				chosen = append(chosen, option.value)
+			}
+		}
+		return strings.Join(chosen, ",")
+	}
 	if len(f.choices) > 0 {
 		return f.choices[f.choice]
 	}
@@ -101,7 +157,8 @@ func newWizard(taken []int) wizard {
 		selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1),
 		inputField("voice", "Voice seats", "0 means no limit, which is the server's own default. A cap is about your CPU and upload bandwidth, not about ports.", "0", "0"),
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
-		inputField("sfu", "Public SFU address", "How clients reach the SFU on this machine. Empty means localhost, which only works for clients on this machine.", "", "ws://192.168.1.20:5005"),
+		reachField(),
+		onlyWhen(inputField("domain", "Its address", "Include the scheme. Behind a reverse proxy with TLS this is wss://, otherwise ws:// and the port.", "", "wss://voice.example.com"), "reach", domainChoice),
 		selectField("storage", "Storage backend", "Filesystem is simplest; choosing S3 asks for its endpoint and credentials next.", []string{"filesystem", "s3"}, 0),
 
 		// Only reachable when the backend is s3. Asking six questions about
@@ -143,10 +200,36 @@ func wizardFromProfile(profile config.Profile) wizard {
 			values[key] = value
 		}
 	}
+	chosen := map[string]bool{}
+	for _, endpoint := range strings.Split(profile.SFUWebSocketURL, ",") {
+		if endpoint != "" {
+			chosen[endpoint] = true
+		}
+	}
+
 	for i := range w.fields {
 		field := &w.fields[i]
 		if value, ok := values[field.key]; ok {
 			field.input.SetValue(value)
+		}
+		if field.key == "reach" && profile.SFUWebSocketURL != "" {
+			// An address this server uses that is not one of this machine's
+			// current ones came from the typed field, so tick that and put it
+			// back where it was entered.
+			var extra []string
+			for j := range field.options {
+				known := chosen[field.options[j].value]
+				field.options[j].chosen = known
+				delete(chosen, field.options[j].value)
+			}
+			for endpoint := range chosen {
+				extra = append(extra, endpoint)
+			}
+			if len(extra) > 0 {
+				sort.Strings(extra)
+				field.options[len(field.options)-1].chosen = true
+				values["domain"] = strings.Join(extra, ",")
+			}
 		}
 		for choice, value := range field.choices {
 			if (field.key == "security" && value == string(profile.Security)) ||
@@ -164,7 +247,11 @@ func (w *wizard) focus() tea.Cmd {
 	for i := range w.fields {
 		w.fields[i].input.Blur()
 	}
-	if len(w.fields[w.step].choices) == 0 {
+	// Only text fields have an input to focus. A tick-list and a one-of-many
+	// choice are built as bare structs, so their textinput is the zero value
+	// and focusing it panics.
+	field := w.fields[w.step]
+	if len(field.choices) == 0 && len(field.options) == 0 {
 		return w.fields[w.step].input.Focus()
 	}
 	return nil
@@ -173,6 +260,21 @@ func (w *wizard) focus() tea.Cmd {
 func (w *wizard) update(msg tea.Msg) tea.Cmd {
 	field := &w.fields[w.step]
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if len(field.options) > 0 {
+			switch key.String() {
+			case "up", "k":
+				if field.cursor > 0 {
+					field.cursor--
+				}
+			case "down", "j":
+				if field.cursor < len(field.options)-1 {
+					field.cursor++
+				}
+			case " ", "space", "x":
+				field.options[field.cursor].chosen = !field.options[field.cursor].chosen
+			}
+			return nil
+		}
 		switch key.String() {
 		case "left", "h":
 			if len(field.choices) > 0 {
@@ -212,9 +314,20 @@ func (w wizard) shown(i int) bool {
 		return true
 	}
 	for _, other := range w.fields {
-		if other.key == field.whenKey {
-			return other.value() == field.whenValue
+		if other.key != field.whenKey {
+			continue
 		}
+		if len(other.options) > 0 {
+			// A tick-list holds several answers at once, so depending on one
+			// of them is a membership test rather than an equality test.
+			for _, option := range other.options {
+				if option.chosen && option.value == field.whenValue {
+					return true
+				}
+			}
+			return false
+		}
+		return other.value() == field.whenValue
 	}
 	return false
 }
@@ -331,6 +444,17 @@ func (w wizard) validateStep() error {
 		if value == "" {
 			return fmt.Errorf("enter the secret access key")
 		}
+	case "reach":
+		if value == "" {
+			return fmt.Errorf("tick at least one way for people to connect")
+		}
+	case "domain":
+		if value == "" {
+			return fmt.Errorf("enter the address, or untick it on the previous step")
+		}
+		if !strings.HasPrefix(value, "ws://") && !strings.HasPrefix(value, "wss://") {
+			return fmt.Errorf("start with ws:// or wss://")
+		}
 	}
 	return nil
 }
@@ -372,7 +496,21 @@ func (w wizard) profile() (config.Profile, error) {
 	profile.Security = config.SecurityLevel(values["security"])
 	profile.VoiceMaxUsers, _ = strconv.Atoi(values["voice"])
 	profile.TrustedProxyHops, _ = strconv.Atoi(values["proxy"])
-	profile.SFUWebSocketURL = values["sfu"]
+	// The ticked routes, with the typed one substituted for its marker.
+	var endpoints []string
+	for _, endpoint := range strings.Split(values["reach"], ",") {
+		if endpoint == "" {
+			continue
+		}
+		if endpoint == domainChoice {
+			if typed := values["domain"]; typed != "" {
+				endpoints = append(endpoints, typed)
+			}
+			continue
+		}
+		endpoints = append(endpoints, endpoint)
+	}
+	profile.SFUWebSocketURL = strings.Join(endpoints, ",")
 	profile.StorageBackend = values["storage"]
 	return profile, profile.Validate()
 }
