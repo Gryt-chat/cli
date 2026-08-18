@@ -76,10 +76,10 @@ func newWizard() wizard {
 	}
 	w := wizard{fields: []wizardField{
 		inputField("name", "Server name", "Shown to people who connect.", "", "My Gryt Server"),
-		inputField("host", "Bind address", "127.0.0.1 is local-only; use 0.0.0.0 behind a firewall or proxy.", "127.0.0.1", "127.0.0.1"),
+		inputField("host", "Bind address", "0.0.0.0 accepts connections from other machines. Use 127.0.0.1 to keep the server on this one.", "0.0.0.0", "0.0.0.0"),
 		inputField("port", "Port", "TCP port exposed by Docker and used by clients.", "5000", "5000"),
 		selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1),
-		inputField("voice", "Voice seats", "Maximum concurrent voice users; 0 means unlimited.", "20", "20"),
+		inputField("voice", "Voice seats", "0 means no limit, which is the server's own default. A cap is about your CPU and upload bandwidth, not about ports.", "0", "0"),
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
 		inputField("sfu", "SFU WebSocket URL", "Optional for now. Voice remains unavailable until an SFU is configured.", "", "wss://…"),
 		selectField("storage", "Storage backend", "Filesystem is simplest; choosing S3 asks for its endpoint and credentials next.", []string{"filesystem", "s3"}, 0),
