@@ -93,3 +93,96 @@ func TestSharedDirSitsBesideTheServers(t *testing.T) {
 		t.Fatalf("SharedDir = %q", store.SharedDir())
 	}
 }
+
+func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
+	store := NewStore(t.TempDir())
+	path, err := store.WriteSharedCompose()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	yaml := string(body)
+
+	for _, want := range []string{"minio/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready"} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("shared compose is missing %q:\n%s", want, yaml)
+		}
+	}
+	// Publishing it collided with an unrelated MinIO already on 9000, and
+	// nothing needs it from the host: servers reach it over the network.
+	if strings.Contains(yaml, "9000:9000") || strings.Contains(yaml, "127.0.0.1:9000") {
+		t.Fatal("the object store must not be published to the host")
+	}
+	// The init container has to address the store the same way everything else
+	// does. Using the bare service name here failed to resolve.
+	if !strings.Contains(yaml, "mc alias set local "+InternalS3Endpoint()) {
+		t.Fatalf("minio-init does not address the store by container name:\n%s", yaml)
+	}
+}
+
+func TestSharedSecretsAreGeneratedOnceAndAreNotTheDefaults(t *testing.T) {
+	store := NewStore(t.TempDir())
+	first, err := store.Secrets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.MinIOPassword == "" || first.MinIOPassword == "minioadmin" {
+		t.Fatalf("the object store password is %q", first.MinIOPassword)
+	}
+
+	second, err := store.Secrets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.MinIOPassword != first.MinIOPassword {
+		t.Fatal("the credentials changed between reads, which would orphan every upload")
+	}
+}
+
+// A server on the shared store needs its own image worker, because the worker
+// reads the job queue out of that server's SQLite database.
+func TestSharedStorageAddsAPerServerImageWorker(t *testing.T) {
+	store := NewStore(t.TempDir())
+	profile := NewProfile("Worker Test")
+
+	path, err := store.WriteCompose(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), "gryt-worker-test-image-worker") {
+		t.Fatalf("no image worker beside the server:\n%s", body)
+	}
+
+	profile.StorageBackend = "filesystem"
+	path, err = store.WriteCompose(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = os.ReadFile(path)
+	if strings.Contains(string(body), "image-worker") {
+		t.Fatal("a filesystem server should not get an image worker")
+	}
+}
+
+// gryt env reported STORAGE_BACKEND=s3 with no S3 settings under it, while the
+// generated .env had all of them, because the credentials were attached in one
+// path and not the other.
+func TestSettingsResolvesTheSharedCredentials(t *testing.T) {
+	store := NewStore(t.TempDir())
+	settings, err := store.Settings(NewProfile("Env Test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]string{}
+	for _, setting := range settings {
+		seen[setting.Key] = setting.Value
+	}
+	if seen["S3_ENDPOINT"] != InternalS3Endpoint() {
+		t.Fatalf("S3_ENDPOINT = %q", seen["S3_ENDPOINT"])
+	}
+	if seen["S3_SECRET_ACCESS_KEY"] == "" {
+		t.Fatal("the shared credentials were not attached")
+	}
+}

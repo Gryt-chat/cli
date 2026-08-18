@@ -159,7 +159,7 @@ func newWizard(taken []int) wizard {
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
 		reachField(),
 		onlyWhen(inputField("domain", "Its address", "Include the scheme. Behind a reverse proxy with TLS this is wss://, otherwise ws:// and the port.", "", "wss://voice.example.com"), "reach", domainChoice),
-		selectField("storage", "Storage backend", "Filesystem is simplest; choosing S3 asks for its endpoint and credentials next.", []string{"filesystem", "s3"}, 0),
+		selectField("storage", "Storage backend", "Shared uses the object store on this machine and needs nothing from you. Filesystem keeps uploads in the server's own directory. S3 asks for an external one.", []string{"shared", "filesystem", "s3"}, 0),
 
 		// Only reachable when the backend is s3. Asking six questions about
 		// object storage to somebody who picked the filesystem would be six

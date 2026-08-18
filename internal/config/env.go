@@ -47,7 +47,7 @@ func (p Profile) EnvSettings() []EnvSetting {
 		{Key: "SERVER_DISCOVERABLE", Value: discoverable, Mode: ModeLive},
 		{Key: "GRYT_TRUSTED_PROXY_HOPS", Value: strconv.Itoa(p.TrustedProxyHops), Mode: ModeRestart},
 		{Key: "VOICE_MAX_USERS", Value: strconv.Itoa(p.VoiceMaxUsers), Mode: ModeRestart},
-		{Key: "STORAGE_BACKEND", Value: p.StorageBackend, Mode: ModeRestart},
+		{Key: "STORAGE_BACKEND", Value: storageBackend(p.StorageBackend), Mode: ModeRestart},
 		// The server refuses to start without this, deliberately: it treats
 		// the placeholder as fatal rather than signing tokens with a value
 		// everybody knows.
@@ -74,6 +74,24 @@ func (p Profile) EnvSettings() []EnvSetting {
 		stun = override
 	}
 	settings = append(settings, EnvSetting{Key: "STUN_SERVERS", Value: stun, Mode: ModeRestart})
+
+	// Pointed at the object store beside it, with credentials generated once
+	// for this machine rather than the published minioadmin defaults.
+	if p.StorageBackend == SharedStorage && p.SharedS3 != nil {
+		settings = append(settings,
+			EnvSetting{Key: "S3_ENDPOINT", Value: InternalS3Endpoint(), Mode: ModeRestart},
+			EnvSetting{Key: "S3_REGION", Value: "auto", Mode: ModeRestart},
+			EnvSetting{Key: "S3_ACCESS_KEY_ID", Value: p.SharedS3.MinIOUser, Sensitive: true, Mode: ModeRestart},
+			EnvSetting{Key: "S3_SECRET_ACCESS_KEY", Value: p.SharedS3.MinIOPassword, Sensitive: true, Mode: ModeRestart},
+			EnvSetting{Key: "S3_BUCKET", Value: p.SharedS3.Bucket, Mode: ModeRestart},
+			EnvSetting{Key: "S3_FORCE_PATH_STYLE", Value: "true", Mode: ModeRestart},
+			// The image worker runs beside this server rather than in the
+			// shared project: it reads the job queue out of this server's
+			// SQLite database, so it needs this server's data directory and
+			// cannot be one process for all of them.
+			EnvSetting{Key: "IMAGE_WORKER_URL", Value: "http://gryt-" + p.ID + "-image-worker:8080", Mode: ModeRestart},
+		)
+	}
 	keys := make([]string, 0, len(p.ExtraEnv))
 	for key := range p.ExtraEnv {
 		keys = append(keys, key)
@@ -89,6 +107,19 @@ func (p Profile) EnvSettings() []EnvSetting {
 	}
 	return settings
 }
+
+// storageBackend maps the wizard's answer onto what the server understands.
+// "shared" is a deployment arrangement rather than a backend: to the server it
+// is S3, pointed at the object store running beside it.
+func storageBackend(choice string) string {
+	if choice == SharedStorage {
+		return "s3"
+	}
+	return choice
+}
+
+// SharedStorage is the wizard's name for using this machine's own object store.
+const SharedStorage = "shared"
 
 func isSensitiveKey(key string) bool {
 	upper := strings.ToUpper(key)
@@ -108,8 +139,30 @@ func quoteEnv(value string) string {
 	return `"` + replacer.Replace(value) + `"`
 }
 
+// Settings resolves what this server's environment actually is.
+//
+// EnvSettings alone is not enough for a server on the shared object store: its
+// credentials live in the shared secrets file rather than on the profile, so
+// they have to be attached first. Doing that here rather than at each call site
+// is what stopped `gryt env` from reporting STORAGE_BACKEND=s3 with no S3
+// settings under it while the generated .env had all of them.
+func (s *Store) Settings(profile Profile) ([]EnvSetting, error) {
+	if profile.StorageBackend == SharedStorage {
+		secrets, err := s.Secrets()
+		if err != nil {
+			return nil, err
+		}
+		profile.SharedS3 = &secrets
+	}
+	return profile.EnvSettings(), nil
+}
+
 func (s *Store) WriteEnv(profile Profile) (string, error) {
 	if err := profile.Validate(); err != nil {
+		return "", err
+	}
+	settings, err := s.Settings(profile)
+	if err != nil {
 		return "", err
 	}
 	dir := s.ServerDir(profile.ID)
@@ -123,7 +176,7 @@ func (s *Store) WriteEnv(profile Profile) (string, error) {
 	}
 	w := bufio.NewWriter(file)
 	_, _ = fmt.Fprintln(w, "# Managed by gryt. Edit through the TUI to preserve validation.")
-	for _, setting := range profile.EnvSettings() {
+	for _, setting := range settings {
 		_, _ = fmt.Fprintf(w, "%s=%s\n", setting.Key, quoteEnv(setting.Value))
 	}
 	if err := w.Flush(); err != nil {
@@ -142,6 +195,40 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "compose.yaml")
+
+	// The image worker reads the job queue out of this server's SQLite
+	// database, so it mounts this server's data directory and there is one per
+	// server. It cannot live in the shared project with the SFU and the object
+	// store, which serve every server from one process each.
+	worker := ""
+	if profile.StorageBackend == SharedStorage {
+		secrets, err := s.Secrets()
+		if err != nil {
+			return "", err
+		}
+		worker = fmt.Sprintf(`
+  image-worker:
+    image: ghcr.io/gryt-chat/image-worker:latest
+    container_name: gryt-%s-image-worker
+    environment:
+      DATA_DIR: /data
+      S3_ENDPOINT: %s
+      S3_REGION: auto
+      S3_ACCESS_KEY_ID: "%s"
+      S3_SECRET_ACCESS_KEY: "%s"
+      S3_BUCKET: "%s"
+      S3_FORCE_PATH_STYLE: "true"
+    volumes:
+      - ./data:/data
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - %s
+    restart: unless-stopped
+`, profile.ID, InternalS3Endpoint(), secrets.MinIOUser, secrets.MinIOPassword, secrets.Bucket, SharedNetwork)
+	}
+
 	content := fmt.Sprintf(`services:
   server:
     image: ghcr.io/gryt-chat/server:latest
@@ -161,11 +248,12 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       timeout: 10s
       retries: 3
 
-# Created by the shared project, which holds the SFU every server here uses.
+%s
+# Created by the shared project, which holds the SFU and the object store.
 networks:
   `+SharedNetwork+`:
     external: true
-`, profile.ID, profile.Host, profile.Port, profile.Port, profile.Port)
+`, profile.ID, profile.Host, profile.Port, profile.Port, profile.Port, worker)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}

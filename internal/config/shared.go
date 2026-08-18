@@ -25,6 +25,17 @@ const (
 	// than a service name, so it resolves the same way from another compose
 	// project on the shared network.
 	SFUContainer = "gryt-sfu"
+	// MinIOContainer is the object store every server here shares. One store
+	// with one bucket, because the alternative is a MinIO per server on a
+	// machine that already runs one process per server.
+	MinIOContainer = "gryt-minio"
+	// MinIOPort is the port inside the network. It is deliberately not
+	// published to the host: servers reach the store over the shared network
+	// by name, and publishing it only creates a collision. On this machine it
+	// collided immediately with an unrelated MinIO already on 9000, and the
+	// failure surfaced as "failed to set up container networking", which says
+	// nothing about ports.
+	MinIOPort = 9000
 	// SFUPort is the signalling port inside the network.
 	SFUPort = 5005
 	// DefaultSTUN matches what production runs. Without it the server logs
@@ -53,9 +64,18 @@ func InternalSFUHost() string {
 	return "ws://" + SFUContainer + ":5005"
 }
 
+// InternalS3Endpoint is how a server reaches the shared object store.
+func InternalS3Endpoint() string {
+	return "http://" + MinIOContainer + ":" + strconv.Itoa(MinIOPort)
+}
+
 func (s *Store) WriteSharedCompose() (string, error) {
 	dir := s.SharedDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	secrets, err := s.Secrets()
+	if err != nil {
 		return "", err
 	}
 	path := filepath.Join(dir, "compose.yaml")
@@ -88,6 +108,50 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  minio:
+    image: minio/minio:latest
+    container_name: ` + MinIOContainer + `
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "` + secrets.MinIOUser + `"
+      MINIO_ROOT_PASSWORD: "` + secrets.MinIOPassword + `"
+    volumes:
+      - minio-data:/data
+    networks:
+      - ` + SharedNetwork + `
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Creates the bucket once. Exits, and compose leaves it exited.
+  minio-init:
+    image: minio/mc:latest
+    container_name: ` + MinIOContainer + `-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: "` + secrets.MinIOUser + `"
+      MINIO_ROOT_PASSWORD: "` + secrets.MinIOPassword + `"
+      S3_BUCKET: "` + secrets.Bucket + `"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local ` + InternalS3Endpoint() + ` "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb -p "local/$$S3_BUCKET" 2>/dev/null || true
+        echo "Bucket ready: $$S3_BUCKET"
+    networks:
+      - ` + SharedNetwork + `
+    restart: "no"
+
+volumes:
+  minio-data:
 
 networks:
   ` + SharedNetwork + `:

@@ -149,7 +149,11 @@ func showEnv(store *config.Store, id string) {
 		if profile.ID != config.Slug(id) {
 			continue
 		}
-		for _, setting := range profile.EnvSettings() {
+		settings, err := store.Settings(profile)
+		if err != nil {
+			fatal(err)
+		}
+		for _, setting := range settings {
 			value := setting.Value
 			if setting.Sensitive {
 				value = "••••••••"
