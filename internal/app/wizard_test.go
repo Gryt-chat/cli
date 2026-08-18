@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -233,8 +234,35 @@ func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter on the last step produced no command, so nothing was saved")
 	}
-	if next, ok := updated.(Model); !ok || next.mode != modeDashboard {
-		t.Fatal("enter on the last step should leave the wizard")
+
+	// It stays on the step while the save runs, so the saving state has
+	// somewhere to appear and a failure can be shown against the form.
+	saving, ok := updated.(Model)
+	if !ok || saving.mode != modeWizard || !saving.busy {
+		t.Fatal("the wizard should stay open and busy while it saves")
+	}
+
+	done, _ := saving.Update(operationDone{message: "Saved My Server"})
+	if next := done.(Model); next.mode != modeDashboard || next.busy {
+		t.Fatal("a finished save should close the wizard")
+	}
+}
+
+// A save that fails used to drop you on the dashboard with an error about a
+// form you could no longer see.
+func TestAFailedSaveKeepsYouOnTheStep(t *testing.T) {
+	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.4.0")
+	model.mode = modeWizard
+	model.wizard = newWizard(nil)
+	model.busy = true
+
+	updated, _ := model.Update(operationDone{err: errors.New("disk full")})
+	next := updated.(Model)
+	if next.mode != modeWizard {
+		t.Fatal("a failed save left the wizard")
+	}
+	if !strings.Contains(next.wizard.err, "disk full") {
+		t.Fatalf("the reason was not shown on the step: %q", next.wizard.err)
 	}
 }
 

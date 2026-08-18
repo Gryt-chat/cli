@@ -51,7 +51,7 @@ var cobalt = theme{
 }
 
 type styles struct {
-	base, header, brand, panel, panelActive, title, muted, accent, success, warning, danger, footer, strong, column lipgloss.Style
+	base, header, brand, title, muted, accent, success, warning, danger, footer, strong, column lipgloss.Style
 }
 
 func newStyles() styles {
@@ -59,22 +59,17 @@ func newStyles() styles {
 	plain := lipgloss.NewStyle()
 	return styles{
 		// No Background call anywhere in this file. That is the point.
-		base:   plain,
-		header: plain,
-		brand:  plain.Bold(true).Foreground(t.accent.value()),
-		// Kept so existing callers compile; both are now plain. Separation
-		// comes from blank lines and indentation, which cost no columns and
-		// cannot be invisible the way a 1.45:1 border was.
-		panel:       plain,
-		panelActive: plain,
-		title:       plain.Bold(true),
-		strong:      plain.Bold(true),
-		column:      plain.Foreground(t.muted.value()),
-		muted:       plain.Foreground(t.muted.value()),
-		accent:      plain.Foreground(t.accent.value()),
-		success:     plain.Foreground(t.success.value()),
-		warning:     plain.Foreground(t.warning.value()),
-		danger:      plain.Foreground(t.danger.value()),
-		footer:      plain.Foreground(t.muted.value()),
+		base:    plain,
+		header:  plain,
+		brand:   plain.Bold(true).Foreground(t.accent.value()),
+		title:   plain.Bold(true),
+		strong:  plain.Bold(true),
+		column:  plain.Foreground(t.muted.value()),
+		muted:   plain.Foreground(t.muted.value()),
+		accent:  plain.Foreground(t.accent.value()),
+		success: plain.Foreground(t.success.value()),
+		warning: plain.Foreground(t.warning.value()),
+		danger:  plain.Foreground(t.danger.value()),
+		footer:  plain.Foreground(t.muted.value()),
 	}
 }
