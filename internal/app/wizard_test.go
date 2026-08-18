@@ -320,3 +320,30 @@ func TestEditingShowsTheCurrentValues(t *testing.T) {
 		t.Fatalf("edit round trip changed the values: %d %s", profile.Port, profile.Host)
 	}
 }
+
+// Starting a server has to bring the shared SFU up first, or the server comes
+// up pointing at a container that does not exist.
+func TestStartingAServerBringsUpTheSharedStack(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	profile := config.NewProfile("My Server")
+	if err := store.Save(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &gruntime.Fake{}
+	model := New(store, fake, "v0.1.5")
+	model.profiles = []config.Profile{profile}
+
+	cmd := model.runOperation("start", profile)
+	if cmd == nil {
+		t.Fatal("start produced no command")
+	}
+	cmd()
+
+	if !fake.SharedStarted {
+		t.Fatal("starting a server did not bring up the shared SFU")
+	}
+	if fake.States[profile.ID] != gruntime.StateRunning {
+		t.Fatal("the server itself was not started")
+	}
+}

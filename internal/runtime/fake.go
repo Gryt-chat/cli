@@ -7,12 +7,17 @@ import (
 )
 
 type Fake struct {
-	States map[string]State
-	Err    error
-	Log    string
+	States        map[string]State
+	Err           error
+	Log           string
+	SharedStarted bool
 }
 
 func (f *Fake) Available(context.Context) error { return f.Err }
+func (f *Fake) EnsureShared(_ context.Context, _ string) error {
+	f.SharedStarted = true
+	return f.Err
+}
 func (f *Fake) Status(_ context.Context, p config.Profile) State {
 	if state, ok := f.States[p.ID]; ok {
 		return state

@@ -53,9 +53,27 @@ func (p Profile) EnvSettings() []EnvSetting {
 		// everybody knows.
 		{Key: "JWT_SECRET", Value: p.JWTSecret, Sensitive: true, Mode: ModeRestart},
 	}
-	if p.SFUWebSocketURL != "" {
-		settings = append(settings, EnvSetting{Key: "SFU_WS_HOST", Value: p.SFUWebSocketURL, Mode: ModeRestart})
+	// The server reaches the SFU over the shared network by container name.
+	// This is not the address clients dial: that is SFU_PUBLIC_HOST below,
+	// which depends on how this machine is reachable from wherever they are.
+	settings = append(settings, EnvSetting{Key: "SFU_WS_HOST", Value: InternalSFUHost(), Mode: ModeRestart})
+
+	// What a client is told to connect to. Falls back to localhost, which is
+	// right for trying a server on the machine that hosts it and wrong for
+	// anything else, so the wizard asks.
+	public := p.SFUWebSocketURL
+	if public == "" {
+		public = "ws://localhost:" + strconv.Itoa(SFUPort)
 	}
+	settings = append(settings, EnvSetting{Key: "SFU_PUBLIC_HOST", Value: public, Mode: ModeRestart})
+
+	// The server hands these to clients for ICE. Without them it logs
+	// "Missing STUN servers!" and media fails for anybody behind NAT.
+	stun := DefaultSTUN
+	if override, ok := p.ExtraEnv["STUN_SERVERS"]; ok {
+		stun = override
+	}
+	settings = append(settings, EnvSetting{Key: "STUN_SERVERS", Value: stun, Mode: ModeRestart})
 	keys := make([]string, 0, len(p.ExtraEnv))
 	for key := range p.ExtraEnv {
 		keys = append(keys, key)
@@ -134,12 +152,19 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       - "%s:%d:%d"
     volumes:
       - ./data:/data
+    networks:
+      - `+SharedNetwork+`
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:%d/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+# Created by the shared project, which holds the SFU every server here uses.
+networks:
+  `+SharedNetwork+`:
+    external: true
 `, profile.ID, profile.Host, profile.Port, profile.Port, profile.Port)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err

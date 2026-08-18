@@ -98,7 +98,7 @@ func newWizard() wizard {
 		selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1),
 		inputField("voice", "Voice seats", "0 means no limit, which is the server's own default. A cap is about your CPU and upload bandwidth, not about ports.", "0", "0"),
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
-		inputField("sfu", "SFU WebSocket URL", "Optional for now. Voice remains unavailable until an SFU is configured.", "", "wss://…"),
+		inputField("sfu", "Public SFU address", "How clients reach the SFU on this machine. Empty means localhost, which only works for clients on this machine.", "", "ws://192.168.1.20:5005"),
 		selectField("storage", "Storage backend", "Filesystem is simplest; choosing S3 asks for its endpoint and credentials next.", []string{"filesystem", "s3"}, 0),
 
 		// Only reachable when the backend is s3. Asking six questions about
