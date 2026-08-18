@@ -29,6 +29,10 @@ type wizardField struct {
 	// What an empty field means. Shown as the placeholder and used when the
 	// field is left alone, so a default is never text you have to delete.
 	fallback string
+	// Which of choices is the one to pick when you have no reason to prefer
+	// another. Empty when the answer genuinely depends on the situation, so
+	// that the badge means something wherever it appears.
+	recommended string
 	// Set for a tick-list. Some questions have more than one right answer at
 	// the same time: a server reachable over a LAN and over the internet is
 	// reachable over both, and the client picks whichever is faster.
@@ -108,6 +112,15 @@ func selectField(key, label, helper string, choices []string, current int) wizar
 	return wizardField{key: key, label: label, helper: helper, choices: choices, choice: current}
 }
 
+// recommend marks the choice to take when you have no reason to prefer
+// another. Deliberately not on every question: path-style addressing is right
+// for MinIO and wrong for AWS, so a badge there would be wrong half the time
+// and would teach people to ignore it on the questions where it is right.
+func recommend(field wizardField, choice string) wizardField {
+	field.recommended = choice
+	return field
+}
+
 // onlyWhen makes a field conditional on an earlier answer.
 func onlyWhen(field wizardField, key, value string) wizardField {
 	field.whenKey, field.whenValue = key, value
@@ -154,12 +167,12 @@ func newWizard(taken []int) wizard {
 		inputField("name", "Server name", "Shown to people who connect.", "", "My Gryt Server"),
 		inputField("host", "Bind address", "0.0.0.0 accepts connections from other machines. Use 127.0.0.1 to keep the server on this one.", "0.0.0.0", "0.0.0.0"),
 		inputField("port", "Port", "TCP port exposed by Docker and used by clients. Offered because nothing else on this machine holds it.", port, port),
-		selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1),
+		recommend(selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1), string(config.SecurityBalanced)),
 		inputField("voice", "Voice seats", "0 means no limit, which is the server's own default. A cap is about your CPU and upload bandwidth, not about ports.", "0", "0"),
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
 		reachField(),
 		onlyWhen(inputField("domain", "Its address", "Include the scheme. Behind a reverse proxy with TLS this is wss://, otherwise ws:// and the port.", "", "wss://voice.example.com"), "reach", domainChoice),
-		selectField("storage", "Where do uploads go?", "Images, files and avatars people send to this server.", []string{"shared", "filesystem", "s3"}, 0),
+		recommend(selectField("storage", "Where do uploads go?", "Images, files and avatars people send to this server.", []string{"shared", "filesystem", "s3"}, 0), "shared"),
 
 		// Only reachable when the backend is s3. Asking six questions about
 		// object storage to somebody who picked the filesystem would be six

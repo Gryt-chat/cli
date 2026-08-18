@@ -492,3 +492,102 @@ func TestEditingRestoresTheTicksAndTheTypedAddress(t *testing.T) {
 		t.Fatalf("a round trip changed it: %q became %q", existing.SFUWebSocketURL, profile.SFUWebSocketURL)
 	}
 }
+
+func TestRecommendationsPointAtARealChoice(t *testing.T) {
+	w := newWizard(nil)
+	for _, field := range w.fields {
+		if field.recommended == "" {
+			continue
+		}
+		found := false
+		for _, choice := range field.choices {
+			if choice == field.recommended {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%q recommends %q, which is not one of its choices %v",
+				field.key, field.recommended, field.choices)
+		}
+	}
+}
+
+// The recommendation should also be what the wizard already has selected, or
+// it is advice the wizard itself does not take.
+func TestTheRecommendedChoiceIsTheOneAlreadySelected(t *testing.T) {
+	w := newWizard(nil)
+	for _, field := range w.fields {
+		if field.recommended == "" {
+			continue
+		}
+		if field.choices[field.choice] != field.recommended {
+			t.Fatalf("%q starts on %q but recommends %q",
+				field.key, field.choices[field.choice], field.recommended)
+		}
+	}
+}
+
+// Not every question has a right answer. Path-style addressing is right for
+// MinIO and wrong for AWS, so badging it would be wrong half the time and
+// would teach people to ignore the badge where it is right.
+func TestQuestionsWithoutARightAnswerCarryNoRecommendation(t *testing.T) {
+	w := newWizard(nil)
+	if got := w.fields[indexOf(t, w, "s3path")].recommended; got != "" {
+		t.Fatalf("path-style addressing recommends %q; it depends on the provider", got)
+	}
+}
+
+// 0.0.0.0 is an instruction to the kernel, not something to hand anybody. The
+// panel showed it as the server's address, which answered the wrong question.
+func TestJoinAddressesExpandTheWildcardBind(t *testing.T) {
+	m := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.3.0")
+	profile := config.NewProfile("Test")
+	profile.Host, profile.Port = "0.0.0.0", 5001
+
+	lines := m.joinAddresses(profile)
+	if len(lines) == 0 {
+		t.Fatal("no address to give anybody")
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "0.0.0.0") {
+			t.Fatalf("the wildcard bind was offered as a join address: %q", line)
+		}
+		if !strings.Contains(line, ":5001") {
+			t.Fatalf("%q does not name the port", line)
+		}
+	}
+}
+
+func TestASpecificBindIsShownAsItself(t *testing.T) {
+	m := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.3.0")
+	profile := config.NewProfile("Test")
+	profile.Host, profile.Port = "127.0.0.1", 5001
+
+	lines := m.joinAddresses(profile)
+	if len(lines) != 1 || !strings.Contains(lines[0], "127.0.0.1:5001") {
+		t.Fatalf("expected the bind address itself, got %v", lines)
+	}
+}
+
+// A server can be running perfectly while voice is dead, because the SFU lives
+// in a separate project. The panel said nothing about that.
+func TestVoiceSaysWhenTheSharedServerIsDown(t *testing.T) {
+	m := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.3.0")
+	profile := config.NewProfile("Test")
+	profile.SFUWebSocketURL = "ws://localhost:5005"
+
+	m.sharedUp = false
+	if !strings.Contains(m.voiceLine(profile), "not running") {
+		t.Fatalf("a down SFU is not reported: %q", m.voiceLine(profile))
+	}
+
+	m.sharedUp = true
+	if !strings.Contains(m.voiceLine(profile), "ready") {
+		t.Fatalf("a working setup is not reported as ready: %q", m.voiceLine(profile))
+	}
+
+	profile.SFUWebSocketURL = ""
+	if !strings.Contains(m.voiceLine(profile), "no route") {
+		t.Fatalf("a server with no route is not reported: %q", m.voiceLine(profile))
+	}
+}
