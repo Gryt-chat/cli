@@ -69,6 +69,8 @@ func tickAfter(d time.Duration) tea.Cmd {
 
 // A newer release exists. Sent once at startup and never again, so the dashboard
 // does not poll while it sits open.
+type publicAddressFound struct{ ip string }
+
 type updateFound struct{ tag string }
 type updateApplied struct {
 	tag string
@@ -95,6 +97,11 @@ type Model struct {
 	updateTag string
 	updating  bool
 	sharedUp  bool
+	// The address this machine answers on from outside its own network.
+	// Looked up once, when a detail view is first opened, because it leaves
+	// the machine and the table does not need it.
+	publicIP      string
+	publicChecked bool
 	// True while a refresh is in flight, so ticks do not stack up behind a
 	// slow health check.
 	refreshing bool
@@ -113,6 +120,23 @@ func (m Model) Init() tea.Cmd {
 // It fails silently. Somebody managing a server on a machine with no route to
 // the internet should see their servers, not an error about a version check
 // they did not ask for.
+// lookUpPublicAddress asks what this machine looks like from outside.
+//
+// Fails silently. Somebody on a network with no route out, or who has turned
+// the lookup off, should see their server rather than an error about a question
+// they did not ask.
+func (m Model) lookUpPublicAddress() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		ip, err := config.PublicAddress(ctx, config.DefaultSTUNServer)
+		if err != nil {
+			return nil
+		}
+		return publicAddressFound{ip: ip}
+	}
+}
+
 func (m Model) checkForUpdate() tea.Cmd {
 	current := m.version
 	return func() tea.Msg {
@@ -343,6 +367,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case publicAddressFound:
+		m.publicIP = msg.ip
+
 	case updateFound:
 		m.updateTag = msg.tag
 	case updateApplied:
@@ -442,8 +469,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.runOperation("restart", profile)
 		}
 	case "enter":
-		if hasProfile {
-			m.mode = modeDetail
+		if !hasProfile {
+			return m, nil
+		}
+		m.mode = modeDetail
+		if !m.publicChecked {
+			m.publicChecked = true
+			return m, m.lookUpPublicAddress()
 		}
 		return m, nil
 	case "l":
@@ -653,20 +685,56 @@ func (m Model) viewDetail() string {
 	}
 	footer := m.styles.footer.Width(m.width).Render(keys)
 
-	addresses := m.joinAddresses(profile)
+	// Grouped by who each address is for. A flat list headed "give people this
+	// address" cannot say that one of them only works from this machine and
+	// another needs a port forwarded first.
+	port := strconv.Itoa(profile.Port)
 	lines := []string{
 		"",
 		"  " + m.styles.title.Render(profile.Name),
-		"",
-		"  " + m.styles.muted.Render("Give people this address"),
 	}
-	for i, address := range addresses {
-		// The first is the one to read; the rest are alternatives.
-		if i == 0 {
-			lines = append(lines, "  "+m.styles.strong.Render(address))
-			continue
+
+	if profile.Host != "0.0.0.0" {
+		lines = append(lines,
+			"",
+			"  "+m.styles.muted.Render("Bound to one address"),
+			"  "+m.styles.strong.Render(profile.Host+":"+port),
+		)
+	} else {
+		var lan []config.Address
+		for _, address := range config.LocalAddresses() {
+			lan = append(lan, address)
 		}
-		lines = append(lines, "  "+m.styles.muted.Render(address))
+		if len(lan) > 0 {
+			lines = append(lines, "", "  "+m.styles.muted.Render("On your network"))
+			for i, address := range lan {
+				value := address.IP + ":" + port
+				if i == 0 {
+					lines = append(lines, "  "+m.styles.strong.Render(value)+m.styles.muted.Render("   "+address.Label))
+					continue
+				}
+				lines = append(lines, "  "+m.styles.muted.Render(value+"   "+address.Label))
+			}
+		}
+
+		lines = append(lines, "", "  "+m.styles.muted.Render("From the internet"))
+		switch {
+		case m.publicIP == "" && config.PublicLookupDisabled():
+			lines = append(lines, "  "+m.styles.muted.Render("lookup turned off"))
+		case m.publicIP == "":
+			lines = append(lines, "  "+m.styles.muted.Render("checking…"))
+		default:
+			lines = append(lines,
+				"  "+m.styles.strong.Render(m.publicIP+":"+port),
+				"  "+m.styles.muted.Render("only if port "+port+" is forwarded to this machine"),
+			)
+		}
+
+		lines = append(lines,
+			"",
+			"  "+m.styles.muted.Render("This machine only"),
+			"  "+m.styles.muted.Render("127.0.0.1:"+port),
+		)
 	}
 
 	lines = append(lines,
