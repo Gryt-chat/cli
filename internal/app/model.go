@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"net/http"
+	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -27,7 +28,13 @@ type profilesLoaded struct {
 	profiles []config.Profile
 	err      error
 }
-type statusesLoaded struct{ states map[string]gruntime.State }
+type statusesLoaded struct {
+	states map[string]gruntime.State
+	// Whether the SFU every server here shares is answering. A server can be
+	// running perfectly while voice is dead because the shared project is not
+	// up, and nothing on the dashboard used to say so.
+	sharedUp bool
+}
 type operationDone struct {
 	message string
 	err     error
@@ -65,6 +72,7 @@ type Model struct {
 	// Set when a newer release exists, which is what turns on the u key.
 	updateTag string
 	updating  bool
+	sharedUp  bool
 }
 
 func New(store *config.Store, manager gruntime.Manager, version string) Model {
@@ -126,8 +134,25 @@ func (m Model) loadStatuses() tea.Cmd {
 		for _, profile := range profiles {
 			states[profile.ID] = m.runtime.Status(ctx, profile)
 		}
-		return statusesLoaded{states: states}
+		return statusesLoaded{states: states, sharedUp: sharedIsUp(ctx)}
 	}
+}
+
+// sharedIsUp asks the SFU whether it is there. It publishes its signalling
+// port, so this needs nothing from Docker.
+func sharedIsUp(ctx context.Context) bool {
+	client := http.Client{Timeout: 900 * time.Millisecond}
+	url := "http://127.0.0.1:" + strconv.Itoa(config.SFUPort) + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	return res.StatusCode >= 200 && res.StatusCode < 300
 }
 
 func (m Model) saveProfile(profile config.Profile) tea.Cmd {
@@ -218,6 +243,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadStatuses()
 	case statusesLoaded:
 		m.states = msg.states
+		m.sharedUp = msg.sharedUp
 	case operationDone:
 		m.busy = false
 		if msg.err != nil {
@@ -358,6 +384,49 @@ func (m Model) View() tea.View {
 	return view
 }
 
+// joinAddresses turns the bind address into the addresses somebody can
+// actually reach this server on.
+func (m Model) joinAddresses(profile config.Profile) []string {
+	port := strconv.Itoa(profile.Port)
+	if profile.Host != "0.0.0.0" {
+		return []string{profile.Host + ":" + port}
+	}
+	// Bound to everything, so every address of this machine reaches it.
+	lines := []string{"127.0.0.1:" + port + m.styles.muted.Render("   (this machine)")}
+	for _, address := range config.LocalAddresses() {
+		lines = append(lines, address.IP+":"+port+m.styles.muted.Render("   ("+address.Label+")"))
+	}
+	return lines
+}
+
+// voiceLine says whether voice will work, which is what somebody wants to
+// know. The list of endpoints underneath it is detail.
+func (m Model) voiceLine(profile config.Profile) string {
+	seats := "unlimited"
+	if profile.VoiceMaxUsers > 0 {
+		seats = strconv.Itoa(profile.VoiceMaxUsers) + " seats"
+	}
+	routes := len(strings.Split(profile.SFUWebSocketURL, ","))
+	if profile.SFUWebSocketURL == "" {
+		return m.styles.warning.Render("no route configured") + " · " + seats
+	}
+	if !m.sharedUp {
+		return m.styles.warning.Render("shared voice server is not running") + " · " + seats
+	}
+	return m.styles.success.Render("ready") + fmt.Sprintf(" · %s · %d route(s)", seats, routes)
+}
+
+func storageLine(backend string) string {
+	switch backend {
+	case "filesystem":
+		return "in this server's own folder"
+	case "s3":
+		return "in the S3 service you configured"
+	default:
+		return "handled on this machine, with thumbnails"
+	}
+}
+
 func (m Model) header(section string) string {
 	left := m.styles.brand.Render("gryt") + m.styles.muted.Render("  server manager")
 	right := m.styles.muted.Render(section)
@@ -418,16 +487,15 @@ func (m Model) viewDashboard() string {
 	details := []string{
 		m.styles.title.Render(profile.Name) + "  " + status,
 		"",
-		m.styles.muted.Render("Address") + "\n" + profile.Address(),
+		// What to hand somebody, rather than what the server binds to. 0.0.0.0
+		// is an instruction to the kernel and not an address anybody can type.
+		m.styles.muted.Render("Give people this address") + "\n" + strings.Join(m.joinAddresses(profile), "\n"),
 		"",
-		m.styles.muted.Render("Security") + "\n" + string(profile.Security) + " · " + profile.Security.Description(),
+		m.styles.muted.Render("Voice") + "\n" + m.voiceLine(profile),
 		"",
-		m.styles.muted.Render("Voice") + "\n" + fmt.Sprintf("%d seats · %s", profile.VoiceMaxUsers, valueOr(profile.SFUWebSocketURL, "SFU not configured")),
+		m.styles.muted.Render("Uploads") + "\n" + storageLine(profile.StorageBackend),
 		"",
-		m.styles.muted.Render("Storage") + "\n" + profile.StorageBackend,
-		"",
-		m.styles.warning.Render("Restart required") + "  bind address · port · SFU · identity trust · storage",
-		m.styles.success.Render("Live when API is available") + "  name · discovery · join policy · connection gate",
+		m.styles.muted.Render("Who can join") + "\n" + profile.Security.Description(),
 	}
 	if m.busy {
 		details = append(details, "", m.styles.accent.Render("Working…"))

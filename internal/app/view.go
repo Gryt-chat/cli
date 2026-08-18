@@ -36,10 +36,17 @@ func (m Model) viewWizard() string {
 	} else if len(field.choices) > 0 {
 		items := make([]string, len(field.choices))
 		for i, choice := range field.choices {
+			// The badge sits in the row rather than in the description below,
+			// so it is readable before you land on the option rather than
+			// after.
+			label := choice
+			if choice == field.recommended {
+				label += " (recommended)"
+			}
 			if i == field.choice {
-				items[i] = m.styles.accent.Bold(true).Render("[ " + choice + " ]")
+				items[i] = m.styles.accent.Bold(true).Render("[ " + label + " ]")
 			} else {
-				items[i] = m.styles.muted.Render("  " + choice + "  ")
+				items[i] = m.styles.muted.Render("  " + label + "  ")
 			}
 		}
 		control = strings.Join(items, "   ")
