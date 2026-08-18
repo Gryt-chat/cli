@@ -98,6 +98,12 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
+		// Ask before doing rather than after failing. Available was declared on
+		// the Manager interface from the start and never called, so the
+		// operator met a raw compose error instead of "Docker is not running".
+		if err := m.runtime.Available(ctx); err != nil {
+			return operationDone{err: err}
+		}
 		var err error
 		switch action {
 		case "start":
@@ -119,6 +125,9 @@ func (m Model) loadLogs(profile config.Profile) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
+		if err := m.runtime.Available(ctx); err != nil {
+			return logsLoaded{profile: profile.Name, err: err}
+		}
 		logs, err := m.runtime.Logs(ctx, profile, dir, 120)
 		return logsLoaded{profile: profile.Name, content: logs, err: err}
 	}
