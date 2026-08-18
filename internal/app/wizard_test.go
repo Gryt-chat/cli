@@ -221,7 +221,7 @@ func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
 // key handling, not in the wizard, so asserting on onLastStep alone proves
 // nothing about whether enter is wired to it.
 func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
-	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{})
+	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.1.0")
 	model.mode = modeWizard
 	model.wizard = newWizard()
 	set(t, &model.wizard, "name", "My Server")

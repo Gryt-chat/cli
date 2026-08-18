@@ -9,7 +9,7 @@ import (
 )
 
 func TestEmptyDashboardExplainsNextAction(t *testing.T) {
-	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{})
+	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.1.0")
 	view := model.viewDashboard()
 	if !containsAll(view, "No servers configured", "Press n") {
 		t.Fatalf("empty dashboard lacks next action:\n%s", view)
