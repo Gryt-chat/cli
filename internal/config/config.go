@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,19 +42,22 @@ func (s SecurityLevel) Description() string {
 }
 
 type Profile struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Host             string            `json:"host"`
-	Port             int               `json:"port"`
-	Security         SecurityLevel     `json:"security"`
-	DataDir          string            `json:"dataDir"`
-	SFUWebSocketURL  string            `json:"sfuWebSocketUrl,omitempty"`
-	VoiceMaxUsers    int               `json:"voiceMaxUsers"`
-	TrustedProxyHops int               `json:"trustedProxyHops"`
-	StorageBackend   string            `json:"storageBackend"`
-	ExtraEnv         map[string]string `json:"extraEnv,omitempty"`
-	CreatedAt        time.Time         `json:"createdAt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	ID               string        `json:"id"`
+	Name             string        `json:"name"`
+	Host             string        `json:"host"`
+	Port             int           `json:"port"`
+	Security         SecurityLevel `json:"security"`
+	DataDir          string        `json:"dataDir"`
+	SFUWebSocketURL  string        `json:"sfuWebSocketUrl,omitempty"`
+	VoiceMaxUsers    int           `json:"voiceMaxUsers"`
+	TrustedProxyHops int           `json:"trustedProxyHops"`
+	StorageBackend   string        `json:"storageBackend"`
+	// Signs this server's session tokens. Generated once and kept, because
+	// rotating it signs everybody out.
+	JWTSecret string            `json:"jwtSecret,omitempty"`
+	ExtraEnv  map[string]string `json:"extraEnv,omitempty"`
+	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt"`
 }
 
 func NewProfile(name string) Profile {
@@ -66,10 +71,23 @@ func NewProfile(name string) Profile {
 		DataDir:        "/data",
 		VoiceMaxUsers:  0,
 		StorageBackend: "filesystem",
+		JWTSecret:      NewSecret(),
 		ExtraEnv:       map[string]string{},
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+}
+
+// NewSecret returns a secret suitable for signing session tokens. 48 random
+// bytes, which is what the deployment docs tell people to generate by hand.
+func NewSecret() string {
+	buf := make([]byte, 48)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand does not fail on any platform this runs on, and a
+		// predictable fallback would be worse than not starting.
+		panic("gryt: no entropy available: " + err.Error())
+	}
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 func (p Profile) Address() string {
@@ -85,6 +103,9 @@ func (p Profile) Validate() error {
 	}
 	if net.ParseIP(p.Host) == nil && p.Host != "localhost" {
 		return fmt.Errorf("host %q is not a valid IP address or localhost", p.Host)
+	}
+	if p.JWTSecret == "" {
+		return errors.New("server has no JWT secret")
 	}
 	if p.Port < 1 || p.Port > 65535 {
 		return errors.New("port must be between 1 and 65535")
@@ -160,6 +181,22 @@ func (s *Store) List() ([]Profile, error) {
 		var profile Profile
 		if jsonErr := json.Unmarshal(data, &profile); jsonErr != nil {
 			return nil, fmt.Errorf("decode %s: %w", path, jsonErr)
+		}
+		// Profiles written before the CLI generated a secret have none, and a
+		// server without one refuses to start. Filling it in here, on the read
+		// path, is what makes an existing profile work on the next start
+		// rather than requiring the operator to recreate it. Written back so
+		// the value is stable: generating a fresh one on every load would sign
+		// everybody out each time.
+		if profile.JWTSecret == "" {
+			profile.JWTSecret = NewSecret()
+			// Best effort. If the profile cannot be written back, for any
+			// reason including it being invalid in some unrelated way, the
+			// listing still succeeds and this server still gets a working
+			// secret for as long as the process lives. Failing the whole
+			// listing because one profile could not be migrated would take
+			// every other server down with it.
+			_ = s.Save(profile)
 		}
 		profiles = append(profiles, profile)
 	}
