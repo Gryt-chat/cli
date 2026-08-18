@@ -11,6 +11,7 @@ type Fake struct {
 	Err           error
 	Log           string
 	SharedStarted bool
+	Containers    map[string]bool
 }
 
 func (f *Fake) Available(context.Context) error { return f.Err }
@@ -39,6 +40,16 @@ func (f *Fake) Stop(_ context.Context, p config.Profile, _ string) error {
 	return f.Err
 }
 func (f *Fake) Restart(context.Context, config.Profile, string) error { return f.Err }
+func (f *Fake) ContainerRunning(_ context.Context, name string) bool {
+	return f.Containers[name]
+}
+func (f *Fake) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
+	return f.Log, f.Err
+}
+func (f *Fake) StopShared(context.Context, string) error {
+	f.SharedStarted = false
+	return f.Err
+}
 func (f *Fake) Logs(context.Context, config.Profile, string, int) (string, error) {
 	return f.Log, f.Err
 }

@@ -33,6 +33,14 @@ type Manager interface {
 	Stop(context.Context, config.Profile, string) error
 	Restart(context.Context, config.Profile, string) error
 	Logs(context.Context, config.Profile, string, int) (string, error)
+	// ContainerRunning reports whether one named container is up. The shared
+	// project's pieces are addressed by container name because they are not
+	// any server's, so there is no profile to ask about.
+	ContainerRunning(context.Context, string) bool
+	// ContainerLogs reads one container's output, for the same reason.
+	ContainerLogs(context.Context, string, int) (string, error)
+	// StopShared takes the shared project down.
+	StopShared(context.Context, string) error
 }
 
 type Docker struct{}
@@ -105,6 +113,29 @@ func (Docker) Stop(ctx context.Context, _ config.Profile, dir string) error {
 
 func (Docker) Restart(ctx context.Context, _ config.Profile, dir string) error {
 	return composeCommand(ctx, dir, "restart")
+}
+
+func (Docker) ContainerRunning(ctx context.Context, name string) bool {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name)
+	out, err := cmd.Output()
+	if err != nil {
+		// No such container, which for our purposes is the same as not running.
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
+func (Docker) ContainerLogs(ctx context.Context, name string, lines int) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", "logs", "--tail", strconv.Itoa(lines), name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker logs %s: %s", name, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (Docker) StopShared(ctx context.Context, dir string) error {
+	return composeCommand(ctx, dir, "down")
 }
 
 func (Docker) Logs(ctx context.Context, _ config.Profile, dir string, lines int) (string, error) {

@@ -31,6 +31,8 @@ type profilesLoaded struct {
 }
 type statusesLoaded struct {
 	states map[string]gruntime.State
+	// Keyed by container name, for the pieces that are not any server's.
+	containers map[string]bool
 	// Whether the SFU every server here shares is answering. A server can be
 	// running perfectly while voice is dead because the shared project is not
 	// up, and nothing on the dashboard used to say so.
@@ -102,6 +104,7 @@ type Model struct {
 	// the machine and the table does not need it.
 	publicIP      string
 	publicChecked bool
+	containers    map[string]bool
 	// True while a refresh is in flight, so ticks do not stack up behind a
 	// slow health check.
 	refreshing bool
@@ -185,7 +188,11 @@ func (m Model) loadStatuses() tea.Cmd {
 		for _, profile := range profiles {
 			states[profile.ID] = m.runtime.Status(ctx, profile)
 		}
-		return statusesLoaded{states: states, sharedUp: sharedIsUp(ctx)}
+		containers := map[string]bool{
+			config.SFUContainer:   m.runtime.ContainerRunning(ctx, config.SFUContainer),
+			config.MinIOContainer: m.runtime.ContainerRunning(ctx, config.MinIOContainer),
+		}
+		return statusesLoaded{states: states, containers: containers, sharedUp: sharedIsUp(ctx)}
 	}
 }
 
@@ -273,6 +280,45 @@ func (m Model) followLogs(profile config.Profile) tea.Cmd {
 	}
 }
 
+func (m Model) followContainerLogs(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		logs, err := m.runtime.ContainerLogs(ctx, name, 120)
+		if err != nil {
+			return logsLoaded{profile: name, err: err}
+		}
+		return logsLoaded{profile: name, content: logs}
+	}
+}
+
+func (m Model) startShared() tea.Cmd {
+	dir := m.store.SharedDir()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if _, err := m.store.WriteSharedCompose(); err != nil {
+			return operationDone{err: err}
+		}
+		if err := m.runtime.EnsureShared(ctx, dir); err != nil {
+			return operationDone{err: err}
+		}
+		return operationDone{message: "Started the shared services"}
+	}
+}
+
+func (m Model) stopShared(label string) tea.Cmd {
+	dir := m.store.SharedDir()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := m.runtime.StopShared(ctx, dir); err != nil {
+			return operationDone{err: err}
+		}
+		return operationDone{message: "Stopped " + label + " — voice and uploads are down for every server here"}
+	}
+}
+
 func (m Model) loadLogs(profile config.Profile) tea.Cmd {
 	dir := m.store.ServerDir(profile.ID)
 	return func() tea.Msg {
@@ -287,6 +333,11 @@ func (m Model) loadLogs(profile config.Profile) tea.Cmd {
 }
 
 func (m Model) selectedProfile() (config.Profile, bool) {
+	// Shared rows have no profile, so anything keyed off a server quietly does
+	// nothing there rather than acting on whichever server happens to be last.
+	if selected, ok := m.selectedEntry(); !ok || selected.kind != entryServer {
+		return config.Profile{}, false
+	}
 	if len(m.profiles) == 0 || m.selected < 0 || m.selected >= len(m.profiles) {
 		return config.Profile{}, false
 	}
@@ -330,6 +381,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusesLoaded:
 		m.refreshing = false
 		m.states = msg.states
+		m.containers = msg.containers
 		m.sharedUp = msg.sharedUp
 	case operationDone:
 		m.busy = false
@@ -442,7 +494,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected--
 		}
 	case "down", "j":
-		if m.selected < len(m.profiles)-1 {
+		if m.selected < len(m.entries())-1 {
 			m.selected++
 		}
 	case "n":
@@ -454,11 +506,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.wizard.focus()
 		}
 	case "s":
+		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
+			m.busy = true
+			return m, m.startShared()
+		}
 		if hasProfile {
 			m.busy = true
 			return m, m.runOperation("start", profile)
 		}
 	case "x":
+		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
+			// Consequential in a way a per-server stop is not: one of these
+			// serves every server on the machine, so say what it costs rather
+			// than reporting it like any other stop.
+			m.busy = true
+			return m, m.stopShared(selected.label)
+		}
 		if hasProfile {
 			m.busy = true
 			return m, m.runOperation("stop", profile)
@@ -479,6 +542,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "l":
+		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
+			m.notice, m.err = "Logs · "+selected.label, ""
+			m.mode = modeLogs
+			return m, m.followContainerLogs(selected.container)
+		}
 		if hasProfile {
 			m.busy = true
 			return m, m.loadLogs(profile)
@@ -629,22 +697,32 @@ func (m Model) viewDashboard() string {
 		pad("NAME", nameW) + pad("STATUS", statusW) + pad("ADDRESS", addressW) +
 		pad("VOICE", voiceW) + pad("UPLOADS", uploadsW)), ""}
 
-	for i, profile := range m.profiles {
-		glyph, word, tone := m.stateOf(profile)
-		row := pad(truncate(profile.Name, nameW-1), nameW) +
-			pad(glyph+" "+word, statusW) +
-			pad(truncate(m.primaryAddress(profile), addressW-1), addressW) +
-			pad(m.voiceCell(profile), voiceW) +
-			pad(uploadsCell(profile.StorageBackend), uploadsW)
-
-		switch {
-		case i == m.selected:
-			// Weight, not a box. The selected row is the only bold thing on
-			// screen, so the eye lands on it without anything being drawn.
-			lines = append(lines, m.styles.strong.Render("› "+row))
-		default:
-			lines = append(lines, tone.Render("  ")+m.styles.muted.Render(row))
+	for i, item := range m.entries() {
+		// The shared pieces get a heading, because they are not more servers
+		// and stopping one of them is not a per-server act.
+		if item.kind == entryShared && (i == 0 || m.entries()[i-1].kind == entryServer) {
+			lines = append(lines, "", m.styles.column.Render("  SHARED  ")+m.styles.muted.Render("one of each, used by every server above"))
 		}
+
+		var row string
+		glyph, word, tone := m.entryState(item)
+		if item.kind == entryServer {
+			row = pad(truncate(item.profile.Name, nameW-1), nameW) +
+				pad(glyph+" "+word, statusW) +
+				pad(truncate(m.primaryAddress(item.profile), addressW-1), addressW) +
+				pad(m.voiceCell(item.profile), voiceW) +
+				pad(uploadsCell(item.profile.StorageBackend), uploadsW)
+		} else {
+			row = pad(truncate(item.label, nameW-1), nameW) +
+				pad(glyph+" "+word, statusW) +
+				item.role
+		}
+
+		if i == m.selected {
+			lines = append(lines, m.styles.strong.Render("› "+row))
+			continue
+		}
+		lines = append(lines, tone.Render("  ")+m.styles.muted.Render(row))
 	}
 
 	if m.updating {
@@ -752,6 +830,17 @@ func (m Model) viewDetail() string {
 
 	body := lipgloss.NewStyle().Height(max(4, m.height-2)).Render(strings.Join(lines, "\n"))
 	return head + "\n" + body + "\n" + footer
+}
+
+// entryState answers for either kind of row.
+func (m Model) entryState(item entry) (glyph, word string, tone lipgloss.Style) {
+	if item.kind == entryServer {
+		return m.stateOf(item.profile)
+	}
+	if m.containers[item.container] {
+		return "●", "running", m.styles.success
+	}
+	return "○", "stopped", m.styles.muted
 }
 
 // stateOf pairs every status with a glyph as well as a colour, so the fact
