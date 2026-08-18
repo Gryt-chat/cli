@@ -60,11 +60,11 @@ func NewProfile(name string) Profile {
 	return Profile{
 		ID:             Slug(name),
 		Name:           strings.TrimSpace(name),
-		Host:           "127.0.0.1",
+		Host:           "0.0.0.0",
 		Port:           5000,
 		Security:       SecurityBalanced,
 		DataDir:        "/data",
-		VoiceMaxUsers:  20,
+		VoiceMaxUsers:  0,
 		StorageBackend: "filesystem",
 		ExtraEnv:       map[string]string{},
 		CreatedAt:      now,
