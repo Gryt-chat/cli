@@ -11,7 +11,8 @@ func (m Model) viewWizard() string {
 	header := m.header("NEW SERVER")
 	footer := m.styles.footer.Width(m.width).Render("enter next/save   shift+tab back   ←/→ choose   esc cancel")
 	field := m.wizard.fields[m.wizard.step]
-	progress := fmt.Sprintf("Step %d of %d", m.wizard.step+1, len(m.wizard.fields))
+	step, total := m.wizard.progress()
+	progress := fmt.Sprintf("Step %d of %d", step, total)
 	var control string
 	if len(field.choices) > 0 {
 		items := make([]string, len(field.choices))
