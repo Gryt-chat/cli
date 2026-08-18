@@ -48,6 +48,10 @@ func (p Profile) EnvSettings() []EnvSetting {
 		{Key: "GRYT_TRUSTED_PROXY_HOPS", Value: strconv.Itoa(p.TrustedProxyHops), Mode: ModeRestart},
 		{Key: "VOICE_MAX_USERS", Value: strconv.Itoa(p.VoiceMaxUsers), Mode: ModeRestart},
 		{Key: "STORAGE_BACKEND", Value: p.StorageBackend, Mode: ModeRestart},
+		// The server refuses to start without this, deliberately: it treats
+		// the placeholder as fatal rather than signing tokens with a value
+		// everybody knows.
+		{Key: "JWT_SECRET", Value: p.JWTSecret, Sensitive: true, Mode: ModeRestart},
 	}
 	if p.SFUWebSocketURL != "" {
 		settings = append(settings, EnvSetting{Key: "SFU_WS_HOST", Value: p.SFUWebSocketURL, Mode: ModeRestart})
