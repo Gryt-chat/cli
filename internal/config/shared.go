@@ -44,6 +44,10 @@ const (
 	// address to the STUN server and nothing else; it is set here rather than
 	// left empty because voice that only works on one LAN is not voice.
 	DefaultSTUN = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+	// DefaultSTUNServer is the same first server, in the host:port form a
+	// binding request needs. Named once so the docs can say which host the
+	// public-address lookup contacts.
+	DefaultSTUNServer = "stun.l.google.com:19302"
 	// SFUMuxPort carries every participant's media over one UDP port.
 	// Production uses 443, which needs a privileged bind and collides with
 	// anything already serving HTTPS; 3478 is unprivileged and is the port
