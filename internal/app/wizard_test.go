@@ -363,7 +363,7 @@ func TestFocusingEveryStepDoesNotPanic(t *testing.T) {
 	}
 }
 
-func tick(t *testing.T, w *wizard, label string) {
+func tickOption(t *testing.T, w *wizard, label string) {
 	t.Helper()
 	field := &w.fields[indexOf(t, *w, "reach")]
 	for i := range field.options {
@@ -411,7 +411,7 @@ func TestTickedRoutesBecomeACommaSeparatedPublicHost(t *testing.T) {
 	if len(addresses) == 0 {
 		t.Skip("no non-virtual addresses on this machine to tick")
 	}
-	tick(t, &w, addresses[0].IP)
+	tickOption(t, &w, addresses[0].IP)
 
 	profile, err := w.profile()
 	if err != nil {
@@ -430,7 +430,7 @@ func TestTickedRoutesBecomeACommaSeparatedPublicHost(t *testing.T) {
 func TestTheTypedAddressReplacesItsMarker(t *testing.T) {
 	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
-	tick(t, &w, "domain or address")
+	tickOption(t, &w, "domain or address")
 	set(t, &w, "domain", "wss://voice.example.com")
 
 	profile, err := w.profile()
@@ -456,7 +456,7 @@ func TestReachAndDomainAreValidated(t *testing.T) {
 		t.Fatal("ticking nothing should not validate")
 	}
 
-	tick(t, &w, "domain or address")
+	tickOption(t, &w, "domain or address")
 	w.step = indexOf(t, w, "domain")
 	set(t, &w, "domain", "voice.example.com")
 	if err := w.validateStep(); err == nil {
@@ -589,5 +589,60 @@ func TestVoiceSaysWhenTheSharedServerIsDown(t *testing.T) {
 	profile.SFUWebSocketURL = ""
 	if !strings.Contains(m.voiceLine(profile), "no route") {
 		t.Fatalf("a server with no route is not reported: %q", m.voiceLine(profile))
+	}
+}
+
+// The dashboard used to show whatever the status had been when you last
+// pressed g, so a server that fell over looked fine until you thought to ask.
+func TestATickRefreshesTheDashboard(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	profile := config.NewProfile("Test")
+	if err := store.Save(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(store, &gruntime.Fake{}, "v0.3.0")
+	m.profiles = []config.Profile{profile}
+
+	updated, cmd := m.Update(tick{})
+	if cmd == nil {
+		t.Fatal("a tick produced no work, so the dashboard would never refresh again")
+	}
+	if !updated.(Model).refreshing {
+		t.Fatal("the tick did not start a refresh")
+	}
+}
+
+// A slow health check must not have ticks stacking up behind it.
+func TestATickDuringARefreshOnlyReschedules(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	profile := config.NewProfile("Test")
+	m := New(store, &gruntime.Fake{}, "v0.3.0")
+	m.profiles = []config.Profile{profile}
+	m.refreshing = true
+
+	updated, cmd := m.Update(tick{})
+	if cmd == nil {
+		t.Fatal("the loop must keep ticking even while busy")
+	}
+	if !updated.(Model).refreshing {
+		t.Fatal("an in-flight refresh was cancelled by a tick")
+	}
+}
+
+// A container that goes away mid-follow should not replace the logs on screen
+// with an error.
+func TestFollowingLogsKeepsWhatIsOnScreenWhenItFails(t *testing.T) {
+	m := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.3.0")
+	m.logs = "existing output"
+
+	updated, _ := m.Update(logsFollowed{content: ""})
+	if updated.(Model).logs != "existing output" {
+		t.Fatal("a failed follow wiped the logs already on screen")
+	}
+
+	updated, _ = updated.(Model).Update(logsFollowed{content: "newer output"})
+	if updated.(Model).logs != "newer output" {
+		t.Fatal("a successful follow did not update the logs")
 	}
 }
