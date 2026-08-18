@@ -32,7 +32,7 @@ func set(t *testing.T, w *wizard, key, value string) {
 }
 
 func TestStorageChoiceControlsHowManyStepsThereAre(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	if _, total := w.progress(); total != 8 {
 		t.Fatalf("filesystem should ask 8 questions, got %d", total)
 	}
@@ -44,7 +44,7 @@ func TestStorageChoiceControlsHowManyStepsThereAre(t *testing.T) {
 }
 
 func TestStorageIsTheLastStepUntilS3IsChosen(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
 	w.step = indexOf(t, w, "storage")
 
@@ -64,7 +64,7 @@ func TestStorageIsTheLastStepUntilS3IsChosen(t *testing.T) {
 }
 
 func TestS3AnswersReachTheEnvironment(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
 	set(t, &w, "storage", "s3")
 	set(t, &w, "s3endpoint", "http://minio:9000")
@@ -160,7 +160,7 @@ func TestEditingAnS3ServerKeepsItsCredentials(t *testing.T) {
 }
 
 func TestS3StepsAreValidated(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	set(t, &w, "storage", "s3")
 
 	w.step = indexOf(t, w, "s3endpoint")
@@ -195,7 +195,7 @@ func indexOf(t *testing.T, w wizard, key string) int {
 // sixth S3 one.
 func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
 	for _, backend := range []string{"filesystem", "s3"} {
-		w := newWizard()
+		w := newWizard(nil)
 		set(t, &w, "name", "My Server")
 		set(t, &w, "storage", backend)
 
@@ -223,7 +223,7 @@ func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
 func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
 	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.1.0")
 	model.mode = modeWizard
-	model.wizard = newWizard()
+	model.wizard = newWizard(nil)
 	set(t, &model.wizard, "name", "My Server")
 	steps := model.wizard.visible()
 	model.wizard.step = steps[len(steps)-1]
@@ -240,7 +240,7 @@ func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
 // Defaults are placeholders now, so a field left alone is empty and still means
 // its default.
 func TestLeavingDefaultedFieldsAloneUsesTheDefaults(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
 
 	profile, err := w.profile()
@@ -250,8 +250,9 @@ func TestLeavingDefaultedFieldsAloneUsesTheDefaults(t *testing.T) {
 	if profile.Host != "0.0.0.0" {
 		t.Fatalf("host = %q", profile.Host)
 	}
-	if profile.Port != 5000 {
-		t.Fatalf("port = %d", profile.Port)
+	// The offered port is whatever is free here, not a fixed 5000.
+	if profile.Port < config.DefaultPort {
+		t.Fatalf("port = %d, below the starting point", profile.Port)
 	}
 	if profile.VoiceMaxUsers != 0 || profile.TrustedProxyHops != 0 {
 		t.Fatalf("voice = %d, proxy = %d", profile.VoiceMaxUsers, profile.TrustedProxyHops)
@@ -262,7 +263,7 @@ func TestLeavingDefaultedFieldsAloneUsesTheDefaults(t *testing.T) {
 // typing appended and you got 50005001. Typing now replaces because there is
 // nothing there to append to.
 func TestTypingIntoADefaultedFieldReplacesRatherThanAppends(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
 	set(t, &w, "port", "5001")
 
@@ -276,7 +277,7 @@ func TestTypingIntoADefaultedFieldReplacesRatherThanAppends(t *testing.T) {
 }
 
 func TestAnEmptyDefaultedFieldValidates(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	for _, key := range []string{"host", "port", "voice", "proxy"} {
 		w.step = indexOf(t, w, key)
 		if err := w.validateStep(); err != nil {
@@ -287,7 +288,7 @@ func TestAnEmptyDefaultedFieldValidates(t *testing.T) {
 
 // A field with no default is still required.
 func TestFieldsWithoutADefaultAreStillRequired(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	w.step = indexOf(t, w, "name")
 	if err := w.validateStep(); err == nil {
 		t.Fatal("an empty server name should not validate")

@@ -17,14 +17,19 @@ func TestEmptyDashboardExplainsNextAction(t *testing.T) {
 }
 
 func TestWizardProducesValidatedProfile(t *testing.T) {
-	w := newWizard()
+	w := newWizard(nil)
 	w.fields[0].input.SetValue("My Server")
 	profile, err := w.profile()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.ID != "my-server" || profile.Port != 5000 || profile.Security != config.SecurityBalanced {
+	// Not a fixed port: the wizard offers the first one nothing holds, which
+	// on a machine running macOS AirPlay is not 5000.
+	if profile.ID != "my-server" || profile.Security != config.SecurityBalanced {
 		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	if profile.Port < config.DefaultPort {
+		t.Fatalf("port %d is below the starting point", profile.Port)
 	}
 }
 

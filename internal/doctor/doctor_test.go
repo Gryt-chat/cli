@@ -3,8 +3,13 @@ package doctor
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/Gryt-chat/cli/internal/config"
@@ -112,4 +117,68 @@ func TestDistinctPortsPass(t *testing.T) {
 	if !find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{first, second}), "Ports").OK {
 		t.Fatal("servers on different ports should pass")
 	}
+}
+
+// The AirPlay case: something holds the port and answers, but not as Gryt.
+func TestAPortHeldBySomethingElseIsReported(t *testing.T) {
+	squatter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden) // what AirTunes returns
+	}))
+	defer squatter.Close()
+
+	host, port := splitHostPort(t, squatter.URL)
+	profile := config.NewProfile("Squatted")
+	profile.Host, profile.Port = host, port
+
+	check := find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{profile}), "Port owners")
+	if check.OK {
+		t.Fatal("a port answering 403 should be reported as held by something else")
+	}
+	if check.Fix == "" {
+		t.Fatal("the check has to say what to do about it")
+	}
+}
+
+// A running Gryt server holds its own port and answers 200. That is normal and
+// must not be reported.
+func TestAPortHeldByTheServerItselfIsFine(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	host, port := splitHostPort(t, server.URL)
+	profile := config.NewProfile("Running")
+	profile.Host, profile.Port = host, port
+
+	if !find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{profile}), "Port owners").OK {
+		t.Fatal("a server answering its own health check must not be reported")
+	}
+}
+
+// A port nothing holds is a stopped server, which is also fine.
+func TestAFreePortIsFine(t *testing.T) {
+	profile := config.NewProfile("Stopped")
+	profile.Host, profile.Port = "127.0.0.1", config.FreePort(nil)
+
+	if !find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{profile}), "Port owners").OK {
+		t.Fatal("a stopped server's free port must not be reported")
+	}
+}
+
+func splitHostPort(t *testing.T, rawURL string) (string, int) {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portText, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return host, port
 }

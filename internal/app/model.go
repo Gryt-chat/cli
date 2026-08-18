@@ -294,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected++
 		}
 	case "n":
-		m.mode, m.wizard, m.notice, m.err = modeWizard, newWizard(), "", ""
+		m.mode, m.wizard, m.notice, m.err = modeWizard, newWizard(config.PortsInUse(m.profiles)), "", ""
 		return m, m.wizard.focus()
 	case "e":
 		if hasProfile {
