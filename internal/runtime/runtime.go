@@ -90,13 +90,43 @@ func composeCommand(ctx context.Context, dir string, args ...string) error {
 	cmd.Stdout = &stderr
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return fmt.Errorf("docker compose: %s", message)
+		return fmt.Errorf("docker compose: %s", composeReason(stderr.String(), err))
 	}
 	return nil
+}
+
+// composeReason picks the line worth showing out of compose's output.
+//
+// Compose narrates to stderr, so a failed run opens with several "Container X
+// Creating" lines and puts the reason further down. Returning the whole buffer
+// meant the dashboard, which has one line to show an error in, displayed the
+// first of those — so a start that failed reported something that reads like a
+// start that is working.
+//
+// The reason is at the end, and is usually the only line that says so.
+func composeReason(output string, fallback error) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "failed") ||
+			strings.Contains(lower, "cannot") || strings.Contains(lower, "no such") {
+			return line
+		}
+	}
+
+	// Nothing announced itself as an error, so the last thing it said is the
+	// best available account of where it stopped.
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return fallback.Error()
 }
 
 func (Docker) EnsureShared(ctx context.Context, dir string) error {
