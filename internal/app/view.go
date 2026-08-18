@@ -46,6 +46,9 @@ func (m Model) viewWizard() string {
 		if field.key == "security" {
 			control += "\n\n" + m.styles.muted.Render(securityDescription(field.choices[field.choice]))
 		}
+		if field.key == "storage" {
+			control += "\n\n" + m.styles.muted.Render(storageDescription(field.choices[field.choice]))
+		}
 	} else {
 		control = field.input.View()
 	}
@@ -71,6 +74,21 @@ func securityDescription(value string) string {
 		return "Accounts + local identities · discoverable · invite-only"
 	default:
 		return "Accounts only · discoverable · invite-only"
+	}
+}
+
+// Named for what each answer does rather than for how it is built. "Shared"
+// and "s3" and "filesystem" are the words the code uses; somebody standing up
+// a server for their friends is choosing between "it just works", "keep it
+// simple" and "I already pay for storage somewhere".
+func storageDescription(value string) string {
+	switch value {
+	case "filesystem":
+		return "Straight into the server's own folder · no extra containers · no thumbnails"
+	case "s3":
+		return "A storage service you already have · you supply the address and keys"
+	default:
+		return "Handled for you on this machine · thumbnails and compression included"
 	}
 }
 
