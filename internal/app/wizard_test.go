@@ -236,3 +236,87 @@ func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
 		t.Fatal("enter on the last step should leave the wizard")
 	}
 }
+
+// Defaults are placeholders now, so a field left alone is empty and still means
+// its default.
+func TestLeavingDefaultedFieldsAloneUsesTheDefaults(t *testing.T) {
+	w := newWizard()
+	set(t, &w, "name", "My Server")
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Host != "0.0.0.0" {
+		t.Fatalf("host = %q", profile.Host)
+	}
+	if profile.Port != 5000 {
+		t.Fatalf("port = %d", profile.Port)
+	}
+	if profile.VoiceMaxUsers != 0 || profile.TrustedProxyHops != 0 {
+		t.Fatalf("voice = %d, proxy = %d", profile.VoiceMaxUsers, profile.TrustedProxyHops)
+	}
+}
+
+// The bug: the field arrived holding "5000" with the cursor at the end, so
+// typing appended and you got 50005001. Typing now replaces because there is
+// nothing there to append to.
+func TestTypingIntoADefaultedFieldReplacesRatherThanAppends(t *testing.T) {
+	w := newWizard()
+	set(t, &w, "name", "My Server")
+	set(t, &w, "port", "5001")
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Port != 5001 {
+		t.Fatalf("port = %d, want 5001", profile.Port)
+	}
+}
+
+func TestAnEmptyDefaultedFieldValidates(t *testing.T) {
+	w := newWizard()
+	for _, key := range []string{"host", "port", "voice", "proxy"} {
+		w.step = indexOf(t, w, key)
+		if err := w.validateStep(); err != nil {
+			t.Fatalf("%s: leaving the default alone should validate, got %v", key, err)
+		}
+	}
+}
+
+// A field with no default is still required.
+func TestFieldsWithoutADefaultAreStillRequired(t *testing.T) {
+	w := newWizard()
+	w.step = indexOf(t, w, "name")
+	if err := w.validateStep(); err == nil {
+		t.Fatal("an empty server name should not validate")
+	}
+
+	set(t, &w, "storage", "s3")
+	w.step = indexOf(t, w, "s3endpoint")
+	if err := w.validateStep(); err == nil {
+		t.Fatal("an empty S3 endpoint should not validate")
+	}
+}
+
+// Editing is the other direction: there the current value is what you want to
+// see, so it is filled in rather than hinted at.
+func TestEditingShowsTheCurrentValues(t *testing.T) {
+	existing := config.NewProfile("My Server")
+	existing.Port = 5005
+	existing.Host = "127.0.0.1"
+
+	w := wizardFromProfile(existing)
+	if got := w.fields[indexOf(t, w, "port")].input.Value(); got != "5005" {
+		t.Fatalf("port field shows %q when editing", got)
+	}
+
+	profile, err := w.profile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Port != 5005 || profile.Host != "127.0.0.1" {
+		t.Fatalf("edit round trip changed the values: %d %s", profile.Port, profile.Host)
+	}
+}
