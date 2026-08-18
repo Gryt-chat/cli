@@ -309,6 +309,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sharedUp = msg.sharedUp
 	case operationDone:
 		m.busy = false
+		if m.mode == modeWizard {
+			if msg.err != nil {
+				// Back to the step, with the reason, rather than to a
+				// dashboard that cannot show what went wrong.
+				m.wizard.err = msg.err.Error()
+				return m, nil
+			}
+			m.mode = modeDashboard
+		}
 		if msg.err != nil {
 			m.err, m.notice = msg.err.Error(), ""
 		} else {
@@ -364,7 +373,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.wizard.err = err.Error()
 						return m, nil
 					}
-					m.busy, m.mode = true, modeDashboard
+					// Stays in the wizard while it writes. Leaving immediately
+					// meant the saving state had nowhere to appear, and a
+					// failed save dropped you on the dashboard with an error
+					// about a form you could no longer see.
+					m.busy, m.wizard.err = true, ""
 					return m, m.saveProfile(profile)
 				}
 				return m, m.wizard.next()
