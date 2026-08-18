@@ -693,3 +693,41 @@ func TestReachableAddressesComeBeforeLoopback(t *testing.T) {
 		t.Fatalf("loopback should be last, got %q", lines[len(lines)-1])
 	}
 }
+
+// The detail view swallowed every key but esc, while its own footer listed
+// s, x, r and l — naming keys that did nothing on the one screen dedicated to
+// that server.
+func TestTheDetailViewCanActOnItsServer(t *testing.T) {
+	store := config.NewStore(t.TempDir())
+	profile := config.NewProfile("Test")
+	if err := store.Save(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &gruntime.Fake{}
+	model := New(store, fake, "v0.4.1")
+	model.profiles = []config.Profile{profile}
+	model.mode = modeDetail
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: 's'})
+	if cmd == nil {
+		t.Fatal("s did nothing in the detail view")
+	}
+	cmd()
+	if fake.States[profile.ID] != gruntime.StateRunning {
+		t.Fatal("s in the detail view did not start the server")
+	}
+	if next := updated.(Model); next.mode != modeDetail {
+		t.Fatal("acting on the server should leave you where you were")
+	}
+}
+
+func TestEscapeStillLeavesTheDetailView(t *testing.T) {
+	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.4.1")
+	model.mode = modeDetail
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if next := updated.(Model); next.mode != modeDashboard {
+		t.Fatal("esc did not return to the table")
+	}
+}

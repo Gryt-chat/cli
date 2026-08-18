@@ -391,12 +391,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == modeDetail {
-		if isKey && (key.String() == "esc" || key.String() == "q") {
-			m.mode = modeDashboard
-		}
+	if m.mode == modeDetail && isKey && (key.String() == "esc" || key.String() == "q") {
+		m.mode = modeDashboard
 		return m, nil
 	}
+	// Anything else falls through to the same key handling the table uses, so
+	// the detail view can act on the server it is showing. It used to swallow
+	// every key but esc, while its own footer listed s, x, r and l — naming
+	// keys that did nothing on the one screen dedicated to that server.
 	if !isKey {
 		return m, nil
 	}
@@ -645,7 +647,11 @@ func (m Model) viewDetail() string {
 	}
 	glyph, word, tone := m.stateOf(profile)
 	head := m.header(tone.Render(glyph + " " + word))
-	footer := m.styles.footer.Width(m.width).Render(" esc back   s start   x stop   r restart   l logs   e edit")
+	keys := " esc back   s start   x stop   r restart   l logs   e edit"
+	if m.updateTag != "" {
+		keys = " u update  " + keys
+	}
+	footer := m.styles.footer.Width(m.width).Render(keys)
 
 	addresses := m.joinAddresses(profile)
 	lines := []string{
