@@ -248,10 +248,20 @@ func (w *wizard) previous() tea.Cmd {
 	return nil
 }
 
-func (w wizard) complete() bool {
+// onLastStep reports whether enter should save rather than advance.
+//
+// The dashboard used to work this out for itself with
+// `step == len(fields)-1`, which was the same answer while every field was
+// always shown. Once fields became conditional the two definitions disagreed:
+// a filesystem server sits on step 8 of 8 while the last field in the slice is
+// the sixth S3 one, so enter fell through to next(), which had nowhere to go,
+// and the wizard could not be saved at all.
+func (w wizard) onLastStep() bool {
 	steps := w.visible()
-	return len(steps) > 0 && w.step == steps[len(steps)-1] && w.validateStep() == nil
+	return len(steps) > 0 && w.step == steps[len(steps)-1]
 }
+
+func (w wizard) complete() bool { return w.onLastStep() && w.validateStep() == nil }
 
 func (w wizard) validateStep() error {
 	f := w.fields[w.step]

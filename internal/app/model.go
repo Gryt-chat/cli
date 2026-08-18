@@ -180,7 +180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "shift+tab":
 				return m, m.wizard.previous()
 			case "enter":
-				if m.wizard.step == len(m.wizard.fields)-1 {
+				if m.wizard.onLastStep() {
 					profile, err := m.wizard.profile()
 					if err != nil {
 						m.wizard.err = err.Error()
