@@ -22,7 +22,7 @@ on:
           - beta
           - latest
       bump:
-        description: "Version Bump Type"
+        description: "Version Bump Type (use custom to promote a beta to stable)"
         required: true
         default: "patch"
         type: choice
@@ -94,6 +94,7 @@ jobs:
           set -euo pipefail
 
           CURRENT_VERSION="$(git tag --list 'v*' --sort=-v:refname | head -n1 | sed 's/^v//')"
+          CHANNEL="${{ steps.channel.outputs.channel }}"
           BUMP="${{ github.event.inputs.bump }}"
           CUSTOM_VERSION="${{ github.event.inputs.custom_version }}"
 
@@ -145,6 +146,23 @@ jobs:
                 exit 1
                 ;;
             esac
+          fi
+
+          # Until now the channel input was validated, written to an output and
+          # read by nothing. goreleaser decides prerelease from the tag alone,
+          # so dispatching with beta still shipped a stable release that
+          # /releases/latest returned and the installer picked up. Both
+          # install.sh and `gryt update` resolve /releases/latest, which
+          # excludes prereleases, so the distinction has to come from here.
+          if [[ "$CHANNEL" == "beta" ]]; then
+            BASE="${NEW_VERSION%%-*}"
+            NEXT=1
+            while git rev-parse "v${BASE}-beta.${NEXT}" >/dev/null 2>&1 ||
+              git ls-remote --exit-code --tags origin "refs/tags/v${BASE}-beta.${NEXT}" >/dev/null 2>&1; do
+              NEXT=$((NEXT + 1))
+            done
+            NEW_VERSION="${BASE}-beta.${NEXT}"
+            echo "Beta channel: releasing $NEW_VERSION"
           fi
 
           if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
