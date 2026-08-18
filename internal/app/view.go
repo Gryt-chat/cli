@@ -8,7 +8,7 @@ import (
 )
 
 func (m Model) viewWizard() string {
-	header := m.header("NEW SERVER")
+	header := m.header(m.styles.muted.Render("NEW SERVER"))
 	field := m.wizard.fields[m.wizard.step]
 	keys := "enter next/save   shift+tab back   ←/→ choose   esc cancel"
 	if len(field.options) > 0 {
@@ -100,7 +100,7 @@ func storageDescription(value string) string {
 }
 
 func (m Model) viewLogs() string {
-	header := m.header("LOGS")
+	header := m.header(m.styles.muted.Render("LOGS"))
 	footer := m.styles.footer.Width(m.width).Render("esc back")
 	content := m.logs
 	if strings.TrimSpace(content) == "" {

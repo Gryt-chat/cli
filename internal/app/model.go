@@ -22,6 +22,7 @@ const (
 	modeDashboard mode = iota
 	modeWizard
 	modeLogs
+	modeDetail
 )
 
 type profilesLoaded struct {
@@ -377,6 +378,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == modeDetail {
+		if isKey && (key.String() == "esc" || key.String() == "q") {
+			m.mode = modeDashboard
+		}
+		return m, nil
+	}
 	if !isKey {
 		return m, nil
 	}
@@ -419,6 +426,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			return m, m.runOperation("restart", profile)
 		}
+	case "enter":
+		if hasProfile {
+			m.mode = modeDetail
+		}
+		return m, nil
 	case "l":
 		if hasProfile {
 			m.busy = true
@@ -443,6 +455,8 @@ func (m Model) View() tea.View {
 		content = m.viewWizard()
 	case modeLogs:
 		content = m.viewLogs()
+	case modeDetail:
+		content = m.viewDetail()
 	default:
 		content = m.viewDashboard()
 	}
@@ -460,11 +474,14 @@ func (m Model) joinAddresses(profile config.Profile) []string {
 		return []string{profile.Host + ":" + port}
 	}
 	// Bound to everything, so every address of this machine reaches it.
-	lines := []string{"127.0.0.1:" + port + m.styles.muted.Render("   (this machine)")}
+	// Reachable addresses first and loopback last: the panel above this says
+	// "give people this address", and leading with 127.0.0.1 answers that with
+	// the one address nobody else can use.
+	var lines []string
 	for _, address := range config.LocalAddresses() {
 		lines = append(lines, address.IP+":"+port+m.styles.muted.Render("   ("+address.Label+")"))
 	}
-	return lines
+	return append(lines, "127.0.0.1:"+port+m.styles.muted.Render("   (this machine only)"))
 }
 
 // voiceLine says whether voice will work, which is what somebody wants to
@@ -497,86 +514,230 @@ func storageLine(backend string) string {
 
 func (m Model) header(section string) string {
 	left := m.styles.brand.Render("gryt") + m.styles.muted.Render("  server manager")
-	right := m.styles.muted.Render(section)
+	// Rendered as given. The dashboard's summary carries its own colour, and
+	// wrapping it in muted here silently flattened it.
+	right := section
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2)
 	return m.styles.header.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
+// viewDashboard is a console table: every server and its live state on one
+// screen, the way k9s or docker ps present a fleet.
+//
+// It replaces a two-pane rail-and-panel where twelve identically-styled labels
+// sat inside borders running at 1.45:1 against their own background. Nothing
+// was primary, so nothing could be found. Here the row is the unit, the
+// columns are the facts, and weight separates the selected row from the rest.
 func (m Model) viewDashboard() string {
-	header := m.header("SERVERS")
-	keys := "↑/↓ select   n new   e edit   s start   x stop   r restart   l logs   g refresh   q quit"
+	noun := "servers"
+	if len(m.profiles) == 1 {
+		noun = "server"
+	}
+	summary := fmt.Sprintf("%d %s", len(m.profiles), noun)
+
+	// Only worth reporting when something is running: a fleet that is simply
+	// stopped does not have a voice problem.
+	running := 0
+	for _, profile := range m.profiles {
+		if m.states[profile.ID] == gruntime.StateRunning {
+			running++
+		}
+	}
+	if running > 0 {
+		if m.sharedUp {
+			summary += " · " + m.styles.success.Render("voice ready")
+		} else {
+			summary += " · " + m.styles.warning.Render("voice server down")
+		}
+	}
+	head := m.header(summary)
+
+	keys := "↑/↓ select   enter details   s start   x stop   r restart   l logs   e edit   n new   q quit"
 	if m.updateTag != "" {
 		keys = "u update   " + keys
 	}
-	footer := m.styles.footer.Width(m.width).Render(keys)
-	banner := ""
-	if m.updating {
-		banner = m.styles.muted.Render("  Updating…")
-	} else if m.updateTag != "" {
-		banner = m.styles.accent.Render("  " + m.updateTag + " is available. Press u to update.")
-	}
-	if banner != "" {
-		header += "\n" + banner
+	footer := m.styles.footer.Width(m.width).Render(" " + keys)
+
+	if len(m.profiles) == 0 {
+		empty := m.styles.title.Render("No servers yet") + "\n\n" +
+			m.styles.muted.Render("Press n to make one. It runs on this machine and takes about a minute.")
+		body := lipgloss.Place(m.width, max(4, m.height-2), lipgloss.Center, lipgloss.Center, empty)
+		return head + "\n" + body + "\n" + footer
 	}
 
-	bodyHeight := max(8, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
-	if len(m.profiles) == 0 {
-		empty := m.styles.panelActive.Width(min(66, m.width-4)).Render(m.styles.title.Render("No servers configured") + "\n\n" + m.styles.muted.Render("Press n to create a validated Gryt server profile and Docker deployment."))
-		body := lipgloss.Place(m.width, bodyHeight, lipgloss.Center, lipgloss.Center, empty)
-		return header + "\n" + body + "\n" + footer
-	}
-	railWidth := min(30, max(22, m.width/3))
-	detailWidth := max(36, m.width-railWidth-3)
-	var rows []string
+	// Widths are fixed for the facts and flexible for the name, so the columns
+	// stay put as servers come and go rather than jumping about on each poll.
+	const (
+		statusW  = 10
+		addressW = 22
+		voiceW   = 8
+		uploadsW = 8
+	)
+	// Capped, not greedy. Giving the name every spare column pushed the facts
+	// to the far right of a wide terminal, so the eye had to travel the whole
+	// width to pair a server with its state.
+	nameW := max(12, min(28, m.width-(statusW+addressW+voiceW+uploadsW)-8))
+
+	lines := []string{m.styles.column.Render("  " +
+		pad("NAME", nameW) + pad("STATUS", statusW) + pad("ADDRESS", addressW) +
+		pad("VOICE", voiceW) + pad("UPLOADS", uploadsW)), ""}
+
 	for i, profile := range m.profiles {
-		state := m.states[profile.ID]
-		glyph := m.styles.muted.Render("○")
-		if state == gruntime.StateRunning {
-			glyph = m.styles.success.Render("●")
+		glyph, word, tone := m.stateOf(profile)
+		row := pad(truncate(profile.Name, nameW-1), nameW) +
+			pad(glyph+" "+word, statusW) +
+			pad(truncate(m.primaryAddress(profile), addressW-1), addressW) +
+			pad(m.voiceCell(profile), voiceW) +
+			pad(uploadsCell(profile.StorageBackend), uploadsW)
+
+		switch {
+		case i == m.selected:
+			// Weight, not a box. The selected row is the only bold thing on
+			// screen, so the eye lands on it without anything being drawn.
+			lines = append(lines, m.styles.strong.Render("› "+row))
+		default:
+			lines = append(lines, tone.Render("  ")+m.styles.muted.Render(row))
 		}
-		if state == gruntime.StateUnknown {
-			glyph = m.styles.warning.Render("◆")
-		}
-		row := fmt.Sprintf("%s %s", glyph, profile.Name)
-		if i == m.selected {
-			row = m.styles.accent.Bold(true).Render("› " + row)
-		} else {
-			row = "  " + row
-		}
-		rows = append(rows, row)
 	}
-	rail := m.styles.panel.Width(railWidth).Height(bodyHeight - 2).Render(m.styles.title.Render("Servers") + "\n\n" + strings.Join(rows, "\n"))
-	profile, _ := m.selectedProfile()
-	state := m.states[profile.ID]
-	status := m.styles.muted.Render(string(state))
-	if state == gruntime.StateRunning {
-		status = m.styles.success.Render("running")
-	}
-	details := []string{
-		m.styles.title.Render(profile.Name) + "  " + status,
-		"",
-		// What to hand somebody, rather than what the server binds to. 0.0.0.0
-		// is an instruction to the kernel and not an address anybody can type.
-		m.styles.muted.Render("Give people this address") + "\n" + strings.Join(m.joinAddresses(profile), "\n"),
-		"",
-		m.styles.muted.Render("Voice") + "\n" + m.voiceLine(profile),
-		"",
-		m.styles.muted.Render("Uploads") + "\n" + storageLine(profile.StorageBackend),
-		"",
-		m.styles.muted.Render("Who can join") + "\n" + profile.Security.Description(),
+
+	if m.updating {
+		lines = append(lines, "", m.styles.muted.Render(" Updating…"))
+	} else if m.updateTag != "" {
+		lines = append(lines, "", m.styles.accent.Render(" "+m.updateTag+" is available. Press u to update."))
 	}
 	if m.busy {
-		details = append(details, "", m.styles.accent.Render("Working…"))
+		lines = append(lines, "", m.styles.accent.Render(" Working…"))
 	}
 	if m.notice != "" {
-		details = append(details, "", m.styles.success.Render("✓ "+m.notice))
+		lines = append(lines, "", m.styles.success.Render(" ✓ "+m.notice))
 	}
 	if m.err != "" {
-		details = append(details, "", m.styles.danger.Render("! "+m.err))
+		lines = append(lines, "", m.styles.danger.Render(" ! "+m.err))
 	}
-	detail := m.styles.panelActive.Width(detailWidth).Height(bodyHeight - 2).Render(strings.Join(details, "\n"))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, rail, " ", detail)
-	return header + "\n" + body + "\n" + footer
+
+	body := lipgloss.NewStyle().Height(max(4, m.height-2)).Render(strings.Join(lines, "\n"))
+	return head + "\n" + body + "\n" + footer
+}
+
+// viewDetail is one server, with the facts ranked.
+//
+// The panel it replaces rendered twelve fields as identical muted labels, so
+// the address you hand somebody had exactly the weight of the join policy and
+// the eye had nowhere to land. Here one fact is the page and the rest is a
+// single line under it.
+func (m Model) viewDetail() string {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return m.viewDashboard()
+	}
+	glyph, word, tone := m.stateOf(profile)
+	head := m.header(tone.Render(glyph + " " + word))
+	footer := m.styles.footer.Width(m.width).Render(" esc back   s start   x stop   r restart   l logs   e edit")
+
+	addresses := m.joinAddresses(profile)
+	lines := []string{
+		"",
+		"  " + m.styles.title.Render(profile.Name),
+		"",
+		"  " + m.styles.muted.Render("Give people this address"),
+	}
+	for i, address := range addresses {
+		// The first is the one to read; the rest are alternatives.
+		if i == 0 {
+			lines = append(lines, "  "+m.styles.strong.Render(address))
+			continue
+		}
+		lines = append(lines, "  "+m.styles.muted.Render(address))
+	}
+
+	lines = append(lines,
+		"",
+		"  "+m.styles.muted.Render(strings.Join([]string{
+			"voice " + m.voiceCell(profile),
+			"uploads " + uploadsCell(profile.StorageBackend),
+			profile.Security.Description(),
+		}, "  ·  ")),
+	)
+
+	if m.err != "" {
+		lines = append(lines, "", "  "+m.styles.danger.Render("! "+m.err))
+	}
+
+	body := lipgloss.NewStyle().Height(max(4, m.height-2)).Render(strings.Join(lines, "\n"))
+	return head + "\n" + body + "\n" + footer
+}
+
+// stateOf pairs every status with a glyph as well as a colour, so the fact
+// survives a colour-blind reader and a monochrome terminal.
+func (m Model) stateOf(profile config.Profile) (glyph, word string, tone lipgloss.Style) {
+	switch m.states[profile.ID] {
+	case gruntime.StateRunning:
+		return "●", "running", m.styles.success
+	case gruntime.StateUnknown:
+		return "◆", "unknown", m.styles.warning
+	default:
+		return "○", "stopped", m.styles.muted
+	}
+}
+
+// primaryAddress is the one to read at a glance: the address somebody else can
+// reach, in preference to loopback, and never the wildcard bind.
+func (m Model) primaryAddress(profile config.Profile) string {
+	port := strconv.Itoa(profile.Port)
+	if profile.Host != "0.0.0.0" {
+		return profile.Host + ":" + port
+	}
+	if addresses := config.LocalAddresses(); len(addresses) > 0 {
+		return addresses[0].IP + ":" + port
+	}
+	return "127.0.0.1:" + port
+}
+
+func (m Model) voiceCell(profile config.Profile) string {
+	// A stopped server has no voice to report on. Saying "down" there reads as
+	// a fault when it is simply not running.
+	if m.states[profile.ID] != gruntime.StateRunning {
+		return "—"
+	}
+	if profile.SFUWebSocketURL == "" {
+		return "none"
+	}
+	if !m.sharedUp {
+		return "down"
+	}
+	return "ready"
+}
+
+func uploadsCell(backend string) string {
+	switch backend {
+	case "filesystem":
+		return "folder"
+	case "s3":
+		return "s3"
+	default:
+		return "here"
+	}
+}
+
+// pad fills a cell to width with spaces. The cells are built plain and styled
+// afterwards, because padding a string that already carries escape codes
+// measures the codes and the columns drift.
+func pad(text string, width int) string {
+	for lipgloss.Width(text) < width {
+		text += " "
+	}
+	return text + " "
+}
+
+func truncate(text string, width int) string {
+	if lipgloss.Width(text) <= width {
+		return text
+	}
+	runes := []rune(text)
+	if width < 2 || len(runes) < 2 {
+		return text
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 func valueOr(value, fallback string) string {

@@ -646,3 +646,22 @@ func TestFollowingLogsKeepsWhatIsOnScreenWhenItFails(t *testing.T) {
 		t.Fatal("a successful follow did not update the logs")
 	}
 }
+
+// The panel headed "Give people this address" led with 127.0.0.1, which is the
+// one address nobody else can use.
+func TestReachableAddressesComeBeforeLoopback(t *testing.T) {
+	m := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.3.1")
+	profile := config.NewProfile("Test")
+	profile.Host, profile.Port = "0.0.0.0", 5001
+
+	lines := m.joinAddresses(profile)
+	if len(lines) < 2 {
+		t.Skip("no non-loopback address on this machine to rank above loopback")
+	}
+	if strings.Contains(lines[0], "127.0.0.1") {
+		t.Fatalf("loopback is first, so the primary address is one nobody can use: %q", lines[0])
+	}
+	if !strings.Contains(lines[len(lines)-1], "127.0.0.1") {
+		t.Fatalf("loopback should be last, got %q", lines[len(lines)-1])
+	}
+}
