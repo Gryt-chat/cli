@@ -25,15 +25,28 @@ will be connected to a local authenticated management API in the next phase.
 
 ## Install
 
-Requires Go 1.24 or newer for source installation:
+```sh
+curl -fsSL https://get.gryt.chat | sh
+```
+
+The script picks the build for your platform, checks it against the release
+checksums, and installs to `/usr/local/bin` if that is writable or
+`~/.local/bin` if not. `GRYT_VERSION` installs a specific tag instead of the
+newest release, and `GRYT_INSTALL_DIR` changes where the binary lands.
+
+It does not cover Windows. Download the `.zip` from the
+[releases page](https://github.com/Gryt-chat/cli/releases) instead.
+
+From source, with Go 1.25 or newer:
 
 ```sh
 go install github.com/Gryt-chat/cli/cmd/gryt@latest
-gryt
 ```
 
 Docker Desktop or Docker Engine with the Compose plugin is required to start a
 generated deployment. Profile creation and `.env` generation work without it.
+
+Full documentation: [docs.gryt.chat/docs/cli](https://docs.gryt.chat/docs/cli).
 
 ## Keyboard map
 
