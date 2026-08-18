@@ -18,6 +18,9 @@ type wizardField struct {
 	// Shown only while the field named by whenKey holds whenValue. An empty
 	// whenKey means the field is always shown.
 	whenKey, whenValue string
+	// What an empty field means. Shown as the placeholder and used when the
+	// field is left alone, so a default is never text you have to delete.
+	fallback string
 }
 
 type wizard struct {
@@ -27,7 +30,16 @@ type wizard struct {
 	original *config.Profile
 }
 
-func inputField(key, label, helper, value, placeholder string) wizardField {
+// inputField starts empty with the default shown as the placeholder, rather
+// than pre-filled with it.
+//
+// A pre-filled field puts the cursor at the end, so typing appends: changing
+// the port from 5000 to 5001 meant deleting four characters first, and typing
+// "uploads" into a bucket field holding "gryt" produced "grytuploads". bubbles
+// exposes no selection, so there is no select-on-focus to reach for. Leaving
+// the field empty and treating empty as the default gets the same result and
+// is less to explain.
+func inputField(key, label, helper, fallback, placeholder string) wizardField {
 	input := textinput.New()
 	inputStyles := textinput.DefaultDarkStyles()
 	inputStyles.Focused.Text = inputStyles.Focused.Text.Foreground(cobalt.text.value())
@@ -37,10 +49,12 @@ func inputField(key, label, helper, value, placeholder string) wizardField {
 	inputStyles.Cursor.Color = cobalt.accent.value()
 	input.SetStyles(inputStyles)
 	input.Prompt = ""
+	if placeholder == "" {
+		placeholder = fallback
+	}
 	input.Placeholder = placeholder
-	input.SetValue(value)
 	input.SetWidth(48)
-	return wizardField{key: key, label: label, helper: helper, input: input}
+	return wizardField{key: key, label: label, helper: helper, input: input, fallback: fallback}
 }
 
 func selectField(key, label, helper string, choices []string, current int) wizardField {
@@ -65,7 +79,10 @@ func (f wizardField) value() string {
 	if len(f.choices) > 0 {
 		return f.choices[f.choice]
 	}
-	return strings.TrimSpace(f.input.Value())
+	if typed := strings.TrimSpace(f.input.Value()); typed != "" {
+		return typed
+	}
+	return f.fallback
 }
 
 func newWizard() wizard {
@@ -265,7 +282,7 @@ func (w wizard) complete() bool { return w.onLastStep() && w.validateStep() == n
 
 func (w wizard) validateStep() error {
 	f := w.fields[w.step]
-	value := strings.TrimSpace(f.input.Value())
+	value := f.value()
 	switch f.key {
 	case "name":
 		if value == "" {
@@ -316,11 +333,7 @@ func (w wizard) validateStep() error {
 func (w wizard) profile() (config.Profile, error) {
 	values := map[string]string{}
 	for _, field := range w.fields {
-		if len(field.choices) > 0 {
-			values[field.key] = field.choices[field.choice]
-		} else {
-			values[field.key] = strings.TrimSpace(field.input.Value())
-		}
+		values[field.key] = field.value()
 	}
 	profile := config.NewProfile(values["name"])
 
