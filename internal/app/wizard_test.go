@@ -3,7 +3,9 @@ package app
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Gryt-chat/cli/internal/config"
+	gruntime "github.com/Gryt-chat/cli/internal/runtime"
 )
 
 // set puts a value into the field with the given key, whichever kind it is.
@@ -184,4 +186,53 @@ func indexOf(t *testing.T, w wizard, key string) int {
 	}
 	t.Fatalf("no field %q", key)
 	return -1
+}
+
+// Regression: the dashboard decided whether enter saves with
+// `step == len(fields)-1`, which stopped meaning "the last visible step" as
+// soon as fields became conditional. A filesystem server could be walked to
+// step 8 of 8 and never saved, because the last field in the slice was the
+// sixth S3 one.
+func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
+	for _, backend := range []string{"filesystem", "s3"} {
+		w := newWizard()
+		set(t, &w, "name", "My Server")
+		set(t, &w, "storage", backend)
+
+		last := w.visible()[len(w.visible())-1]
+		if w.fields[last].key == "storage" && backend == "s3" {
+			t.Fatal("storage cannot be the last step for an s3 server")
+		}
+
+		w.step = last
+		if !w.onLastStep() {
+			t.Fatalf("%s: the last visible step is not recognised as last", backend)
+		}
+
+		// And the step before it must not be, or enter would save early.
+		w.step = w.visible()[len(w.visible())-2]
+		if w.onLastStep() {
+			t.Fatalf("%s: the second-to-last step was treated as last", backend)
+		}
+	}
+}
+
+// The test that would actually have caught it: the bug lived in the dashboard's
+// key handling, not in the wizard, so asserting on onLastStep alone proves
+// nothing about whether enter is wired to it.
+func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
+	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{})
+	model.mode = modeWizard
+	model.wizard = newWizard()
+	set(t, &model.wizard, "name", "My Server")
+	steps := model.wizard.visible()
+	model.wizard.step = steps[len(steps)-1]
+
+	updated, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on the last step produced no command, so nothing was saved")
+	}
+	if next, ok := updated.(Model); !ok || next.mode != modeDashboard {
+		t.Fatal("enter on the last step should leave the wizard")
+	}
 }
