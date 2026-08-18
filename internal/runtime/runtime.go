@@ -26,6 +26,9 @@ const (
 type Manager interface {
 	Available(context.Context) error
 	Status(context.Context, config.Profile) State
+	// EnsureShared brings up the project holding the SFU. Starting a server
+	// without it leaves the server unable to reach any media plane at all.
+	EnsureShared(context.Context, string) error
 	Start(context.Context, config.Profile, string) error
 	Stop(context.Context, config.Profile, string) error
 	Restart(context.Context, config.Profile, string) error
@@ -86,6 +89,10 @@ func composeCommand(ctx context.Context, dir string, args ...string) error {
 		return fmt.Errorf("docker compose: %s", message)
 	}
 	return nil
+}
+
+func (Docker) EnsureShared(ctx context.Context, dir string) error {
+	return composeCommand(ctx, dir, "up", "--detach", "--remove-orphans")
 }
 
 func (Docker) Start(ctx context.Context, _ config.Profile, dir string) error {

@@ -159,6 +159,15 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 		var err error
 		switch action {
 		case "start":
+			// The SFU lives in its own project shared by every server here, so
+			// it has to exist and be running before a server that expects to
+			// reach it comes up.
+			if _, err := m.store.WriteSharedCompose(); err != nil {
+				return operationDone{err: err}
+			}
+			if err := m.runtime.EnsureShared(ctx, m.store.SharedDir()); err != nil {
+				return operationDone{err: fmt.Errorf("starting the shared SFU: %w", err)}
+			}
 			err = m.runtime.Start(ctx, profile, dir)
 		case "stop":
 			err = m.runtime.Stop(ctx, profile, dir)
