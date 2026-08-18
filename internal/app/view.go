@@ -9,12 +9,31 @@ import (
 
 func (m Model) viewWizard() string {
 	header := m.header("NEW SERVER")
-	footer := m.styles.footer.Width(m.width).Render("enter next/save   shift+tab back   ←/→ choose   esc cancel")
 	field := m.wizard.fields[m.wizard.step]
+	keys := "enter next/save   shift+tab back   ←/→ choose   esc cancel"
+	if len(field.options) > 0 {
+		keys = "space tick   ↑/↓ move   enter next/save   shift+tab back   esc cancel"
+	}
+	footer := m.styles.footer.Width(m.width).Render(keys)
 	step, total := m.wizard.progress()
 	progress := fmt.Sprintf("Step %d of %d", step, total)
 	var control string
-	if len(field.choices) > 0 {
+	if len(field.options) > 0 {
+		lines := make([]string, len(field.options))
+		for i, option := range field.options {
+			box := "[ ] "
+			if option.chosen {
+				box = "[x] "
+			}
+			text := box + option.label
+			if i == field.cursor {
+				lines[i] = m.styles.accent.Bold(true).Render("› " + text)
+			} else {
+				lines[i] = m.styles.muted.Render("  " + text)
+			}
+		}
+		control = strings.Join(lines, "\n")
+	} else if len(field.choices) > 0 {
 		items := make([]string, len(field.choices))
 		for i, choice := range field.choices {
 			if i == field.choice {
