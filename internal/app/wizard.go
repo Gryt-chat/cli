@@ -85,7 +85,10 @@ func (f wizardField) value() string {
 	return f.fallback
 }
 
-func newWizard() wizard {
+// newWizard offers the first port nothing else holds, rather than always 5000.
+// taken names the ports other servers on this machine already claim.
+func newWizard(taken []int) wizard {
+	port := strconv.Itoa(config.FreePort(taken))
 	levels := config.SecurityLevels()
 	security := make([]string, len(levels))
 	for i, level := range levels {
@@ -94,7 +97,7 @@ func newWizard() wizard {
 	w := wizard{fields: []wizardField{
 		inputField("name", "Server name", "Shown to people who connect.", "", "My Gryt Server"),
 		inputField("host", "Bind address", "0.0.0.0 accepts connections from other machines. Use 127.0.0.1 to keep the server on this one.", "0.0.0.0", "0.0.0.0"),
-		inputField("port", "Port", "TCP port exposed by Docker and used by clients.", "5000", "5000"),
+		inputField("port", "Port", "TCP port exposed by Docker and used by clients. Offered because nothing else on this machine holds it.", port, port),
 		selectField("security", "Security level", "Strict hides discovery; Community permits local identities.", security, 1),
 		inputField("voice", "Voice seats", "0 means no limit, which is the server's own default. A cap is about your CPU and upload bandwidth, not about ports.", "0", "0"),
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
@@ -117,7 +120,9 @@ func newWizard() wizard {
 }
 
 func wizardFromProfile(profile config.Profile) wizard {
-	w := newWizard()
+	// No port search when editing: this server already has one, and offering a
+	// different free port would quietly move it.
+	w := newWizard(nil)
 	w.original = &profile
 	values := map[string]string{
 		"name": profile.Name, "host": profile.Host, "port": strconv.Itoa(profile.Port),

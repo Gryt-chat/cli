@@ -9,11 +9,13 @@ package doctor
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/Gryt-chat/cli/internal/config"
 )
@@ -42,6 +44,9 @@ func Environment(ctx context.Context, probe Probe, root string, profiles []confi
 	checks := append(Docker(ctx, probe), configWritable(root))
 	if duplicate := duplicatePorts(profiles); duplicate != nil {
 		checks = append(checks, *duplicate)
+	}
+	if squatted := squattedPorts(ctx, profiles); squatted != nil {
+		checks = append(checks, *squatted)
 	}
 	return checks
 }
@@ -140,6 +145,47 @@ func duplicatePorts(profiles []config.Profile) *Check {
 		return nil
 	}
 	return &Check{Name: "Ports", OK: true, Detail: strconv.Itoa(len(profiles)) + " server(s), no clashes"}
+}
+
+// squattedPorts finds a server whose port is held by something that is not it.
+//
+// The discriminator is the answer, not whether the port can be bound.
+//
+// Binding was the first attempt and it was wrong: macOS allowed a bind of
+// 127.0.0.1:5000 while ControlCenter held *:5000 for AirPlay, so the check
+// concluded the port was free and never asked. Asking is the whole point. A
+// Gryt server replies to /health with 2xx; AirTunes replies 403; a stopped
+// server refuses the connection, which is not a problem and is skipped.
+func squattedPorts(ctx context.Context, profiles []config.Profile) *Check {
+	client := http.Client{Timeout: time.Second}
+	for _, profile := range profiles {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+profile.Address()+"/health", nil)
+		if err != nil {
+			continue
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			// Nothing answered, so nothing is squatting. A stopped server
+			// looks exactly like this and is not a problem.
+			continue
+		}
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return portTaken(profile, "something there answered "+res.Status)
+		}
+	}
+	if len(profiles) == 0 {
+		return nil
+	}
+	return &Check{Name: "Port owners", OK: true, Detail: "no server's port is held by anything else"}
+}
+
+func portTaken(profile config.Profile, why string) *Check {
+	return &Check{
+		Name:   "Port owners",
+		Detail: profile.Name + " uses " + profile.Address() + " and " + why,
+		Fix:    "Edit it with e and pick another port. On macOS, 5000 belongs to AirPlay Receiver.",
+	}
 }
 
 func installHint() string {
