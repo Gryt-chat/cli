@@ -230,3 +230,71 @@ func TestTheRowItselfShowsThatItIsWorking(t *testing.T) {
 		}
 	}
 }
+
+// Editing a running server rewrote .env and compose.yaml, reported "Saved",
+// and left the container running the old values.
+func TestSavingAChangeToARunningServerAppliesIt(t *testing.T) {
+	m, fake := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	m.states = map[string]gruntime.State{profile.ID: gruntime.StateRunning}
+
+	// Write the files once so there is a "before" to differ from.
+	if _, err := m.store.WriteEnv(profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.store.WriteCompose(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	profile.VoiceMaxUsers = 12
+	msg, ok := m.saveProfile(profile)().(operationDone)
+	if !ok {
+		t.Fatalf("unexpected message type")
+	}
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	if !strings.Contains(msg.message, "restarted it to apply") {
+		t.Fatalf("the save did not say it applied the change: %q", msg.message)
+	}
+	if fake.States[profile.ID] != gruntime.StateRunning {
+		t.Fatal("the server was not brought back up")
+	}
+}
+
+// A save that changes nothing must not bounce a running server.
+func TestSavingWithNoChangeLeavesARunningServerAlone(t *testing.T) {
+	m, fake := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	m.states = map[string]gruntime.State{profile.ID: gruntime.StateRunning}
+	if _, err := m.store.WriteEnv(profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.store.WriteCompose(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	fake.States = map[string]gruntime.State{}
+	msg := m.saveProfile(profile)().(operationDone)
+	if strings.Contains(msg.message, "restarted") {
+		t.Fatalf("an unchanged save restarted the server: %q", msg.message)
+	}
+	if _, touched := fake.States[profile.ID]; touched {
+		t.Fatal("an unchanged save touched the container")
+	}
+}
+
+// A stopped server is only written, never started, by a save.
+func TestSavingAStoppedServerDoesNotStartIt(t *testing.T) {
+	m, fake := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	profile.VoiceMaxUsers = 9
+
+	msg := m.saveProfile(profile)().(operationDone)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	if _, started := fake.States[profile.ID]; started {
+		t.Fatal("saving a stopped server started it")
+	}
+}
