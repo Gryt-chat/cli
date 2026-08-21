@@ -40,6 +40,8 @@ type Manager interface {
 	ContainerRunning(context.Context, string) bool
 	// ContainerLogs reads one container's output, for the same reason.
 	ContainerLogs(context.Context, string, int) (string, error)
+	// ContainerEnv reads one variable out of a running container.
+	ContainerEnv(context.Context, string, string) string
 	// StopShared takes the shared project down.
 	StopShared(context.Context, string) error
 }
@@ -177,6 +179,27 @@ func (Docker) ContainerRunning(ctx context.Context, name string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
+}
+
+// ContainerEnv reads a variable out of a running container.
+//
+// This is how the CLI knows which version a server is running. The image bakes
+// SERVER_VERSION in at build time, so it is right there and needs nothing from
+// the server itself — which also means it works on images built before the
+// server had any way to report it.
+func (Docker) ContainerEnv(ctx context.Context, name, key string) string {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format",
+		"{{range .Config.Env}}{{println .}}{{end}}", name)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), key+"="); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 func (Docker) ContainerLogs(ctx context.Context, name string, lines int) (string, error) {

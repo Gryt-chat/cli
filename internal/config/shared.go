@@ -88,7 +88,7 @@ name: gryt-shared
 
 services:
   sfu:
-    image: ghcr.io/gryt-chat/sfu:latest
+    image: ghcr.io/gryt-chat/sfu:` + s.Preferences().ImageTag() + `
     container_name: ` + SFUContainer + `
     ports:
       - "` + strconv.Itoa(SFUPort) + `:5005"
