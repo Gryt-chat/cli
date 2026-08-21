@@ -37,6 +37,8 @@ type statusesLoaded struct {
 	states map[string]gruntime.State
 	// Keyed by container name, for the pieces that are not any server's.
 	containers map[string]bool
+	// Each running server's version, read off its container.
+	versions map[string]string
 	// Whether the SFU every server here shares is answering. A server can be
 	// running perfectly while voice is dead because the shared project is not
 	// up, and nothing on the dashboard used to say so.
@@ -81,6 +83,7 @@ func tickAfter(d time.Duration) tea.Cmd {
 type publicAddressFound struct{ ip string }
 
 type updateFound struct{ tag string }
+type serverLatestFound struct{ tag string }
 type updateApplied struct {
 	tag string
 	err error
@@ -111,7 +114,11 @@ type Model struct {
 	// the machine and the table does not need it.
 	publicIP      string
 	publicChecked bool
-	containers    map[string]bool
+	versions      map[string]string
+	// The newest published server release, for saying whether the one running
+	// here is behind. Fetched once, with the CLI's own update check.
+	serverLatest string
+	containers   map[string]bool
 	// Which rows have an operation in flight, keyed by entry. Replaces a
 	// single busy flag that froze the whole dashboard for the length of a
 	// docker command.
@@ -133,7 +140,7 @@ func New(store *config.Store, manager gruntime.Manager, version string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadProfiles(), m.checkForUpdate(), tickAfter(statusInterval))
+	return tea.Batch(m.loadProfiles(), m.checkForUpdate(), m.checkServerRelease(), tickAfter(statusInterval))
 }
 
 // checkForUpdate asks GitHub which release is newest, once, at startup.
@@ -158,12 +165,26 @@ func (m Model) lookUpPublicAddress() tea.Cmd {
 	}
 }
 
-func (m Model) checkForUpdate() tea.Cmd {
-	current := m.version
+func (m Model) checkServerRelease() tea.Cmd {
+	beta := m.store.Preferences().IsBeta()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		release, err := updater.Check(ctx, http.DefaultClient)
+		tag, err := updater.LatestServerRelease(ctx, http.DefaultClient, beta)
+		if err != nil {
+			return nil
+		}
+		return serverLatestFound{tag: tag}
+	}
+}
+
+func (m Model) checkForUpdate() tea.Cmd {
+	current := m.version
+	beta := m.store.Preferences().IsBeta()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		release, err := updater.CheckChannel(ctx, http.DefaultClient, beta)
 		if err != nil || !updater.Newer(current, release.Tag) {
 			return nil
 		}
@@ -206,11 +227,17 @@ func (m Model) loadStatuses() tea.Cmd {
 		for _, profile := range profiles {
 			states[profile.ID] = m.runtime.Status(ctx, profile)
 		}
+		versions := map[string]string{}
+		for _, profile := range profiles {
+			if states[profile.ID] == gruntime.StateRunning {
+				versions[profile.ID] = m.runtime.ContainerEnv(ctx, "gryt-"+profile.ID, "SERVER_VERSION")
+			}
+		}
 		containers := map[string]bool{
 			config.SFUContainer:   m.runtime.ContainerRunning(ctx, config.SFUContainer),
 			config.MinIOContainer: m.runtime.ContainerRunning(ctx, config.MinIOContainer),
 		}
-		return statusesLoaded{states: states, containers: containers, sharedUp: sharedIsUp(ctx)}
+		return statusesLoaded{states: states, containers: containers, versions: versions, sharedUp: sharedIsUp(ctx)}
 	}
 }
 
@@ -444,6 +471,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.states = msg.states
 		m.containers = msg.containers
+		m.versions = msg.versions
 		m.sharedUp = msg.sharedUp
 	case operationDone:
 		m.busy = false
@@ -494,6 +522,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case publicAddressFound:
 		m.publicIP = msg.ip
+
+	case serverLatestFound:
+		m.serverLatest = msg.tag
 
 	case updateFound:
 		m.updateTag = msg.tag
@@ -751,6 +782,11 @@ func (m Model) viewDashboard() string {
 		noun = "server"
 	}
 	summary := fmt.Sprintf("%d %s", len(m.profiles), noun)
+	// Worth seeing without going looking: a beta CLI deploying beta images is
+	// not a state to discover from a bug report.
+	if m.store.Preferences().IsBeta() {
+		summary = m.styles.warning.Render("beta") + " · " + summary
+	}
 
 	// Only worth reporting when something is running: a fleet that is simply
 	// stopped does not have a voice problem.
@@ -913,6 +949,10 @@ func (m Model) viewDetail() string {
 		)
 	}
 
+	if version := m.versionLine(profile); version != "" {
+		lines = append(lines, "", "  "+m.styles.muted.Render("Version")+"\n  "+version)
+	}
+
 	lines = append(lines,
 		"",
 		"  "+m.styles.muted.Render(strings.Join([]string{
@@ -984,6 +1024,25 @@ func (m Model) dashboardKeys() string {
 		parts = append([]string{"u update"}, parts...)
 	}
 	return strings.Join(parts, "   ")
+}
+
+// versionLine reports what this server runs, and what it could run.
+//
+// Read off the container rather than asked of the server: the image bakes
+// SERVER_VERSION in at build time, so this works on images built long before
+// the server had any way to report it.
+func (m Model) versionLine(profile config.Profile) string {
+	current := m.versions[profile.ID]
+	if current == "" {
+		return ""
+	}
+	if m.serverLatest == "" || !updater.Newer(current, m.serverLatest) {
+		return m.styles.muted.Render(current) + m.styles.muted.Render("   up to date")
+	}
+	// The shape somebody reads at a glance: what you have, an arrow, what is
+	// waiting. The new one carries the colour, because it is the news.
+	return m.styles.muted.Render(current) + " → " + m.styles.warning.Render(strings.TrimPrefix(m.serverLatest, "v")) +
+		m.styles.muted.Render("   restart to pull it")
 }
 
 // stateOf pairs every status with a glyph as well as a colour, so the fact

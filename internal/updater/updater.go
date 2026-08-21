@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,11 @@ import (
 // exercise the real decoding instead of a copy of it.
 var releasesURL = "https://api.github.com/repos/Gryt-chat/cli/releases/latest"
 
+// allReleasesURL includes prereleases, which /releases/latest excludes by
+// design. Following the beta channel means asking the list and taking the
+// newest, because the newest beta is exactly what /releases/latest hides.
+var allReleasesURL = "https://api.github.com/repos/Gryt-chat/cli/releases?per_page=10"
+
 type Release struct {
 	Tag    string
 	Assets map[string]string // name -> download URL
@@ -35,7 +41,111 @@ type Release struct {
 
 // Check asks which release is newest. A caller that cannot reach the network
 // gets an error rather than a wrong answer.
+// Check asks which release is newest on the stable channel.
+// LatestServerRelease reports the newest published Gryt server, so the CLI can
+// say whether the one running here is behind. Same request shape as its own
+// update check, against a different repository.
+func LatestServerRelease(ctx context.Context, client *http.Client, beta bool) (string, error) {
+	url := "https://api.github.com/repos/Gryt-chat/server/releases/latest"
+	if beta {
+		url = "https://api.github.com/repos/Gryt-chat/server/releases?per_page=10"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github returned %s", res.Status)
+	}
+
+	if beta {
+		var list []struct {
+			TagName string `json:"tag_name"`
+			Draft   bool   `json:"draft"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
+			return "", err
+		}
+		for _, entry := range list {
+			if !entry.Draft {
+				return entry.TagName, nil
+			}
+		}
+		return "", errors.New("no published server release found")
+	}
+
+	var one struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&one); err != nil {
+		return "", err
+	}
+	return one.TagName, nil
+}
+
 func Check(ctx context.Context, client *http.Client) (Release, error) {
+	return CheckChannel(ctx, client, false)
+}
+
+// CheckChannel asks which release is newest on the given channel.
+func CheckChannel(ctx context.Context, client *http.Client, beta bool) (Release, error) {
+	if beta {
+		return checkNewestIncludingPrereleases(ctx, client)
+	}
+	return checkLatest(ctx, client)
+}
+
+func checkNewestIncludingPrereleases(ctx context.Context, client *http.Client) (Release, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, allReleasesURL, nil)
+	if err != nil {
+		return Release{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return Release{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return Release{}, fmt.Errorf("github returned %s", res.Status)
+	}
+
+	var payload []struct {
+		TagName string `json:"tag_name"`
+		Draft   bool   `json:"draft"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return Release{}, err
+	}
+
+	// The list comes back newest first. A draft is not something anybody can
+	// install, so it is skipped rather than reported as available.
+	for _, entry := range payload {
+		if entry.Draft {
+			continue
+		}
+		release := Release{Tag: entry.TagName, Assets: map[string]string{}}
+		for _, asset := range entry.Assets {
+			release.Assets[asset.Name] = asset.URL
+		}
+		return release, nil
+	}
+	return Release{}, errors.New("no installable release found")
+}
+
+func checkLatest(ctx context.Context, client *http.Client) (Release, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
 	if err != nil {
 		return Release{}, err
