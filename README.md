@@ -1,27 +1,10 @@
-# Gryt CLI
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Gryt-chat/client/main/public/logo.svg" width="80" alt="Gryt logo" />
+  <h1>Gryt CLI</h1>
+  <p>The terminal manager for self-hosted <a href="https://github.com/Gryt-chat/gryt">Gryt</a> servers.<br />Creates a server with working voice and uploads, then starts, stops, configures and updates every server on the machine.</p>
+</div>
 
-`gryt` is the terminal control plane for self-hosted Gryt Chat servers. Running
-the command with no arguments opens a keyboard-first TUI for creating server
-profiles, editing validated settings, inspecting health and logs, and managing
-the generated Docker Compose deployment.
-
-## Status
-
-This repository contains the first usable foundation:
-
-- Full-screen Bubble Tea v2 server workbench
-- New-server and edit-server wizard
-- Strict, Balanced, and Community security presets
-- Validated bind address, port, voice capacity, proxy, SFU, and storage settings
-- Private profile and `.env` storage in the operating system config directory
-- Generated Docker Compose deployment using `ghcr.io/gryt-chat/server:latest`
-- Start, stop, restart, health refresh, and recent logs
-- Explicit live-versus-restart setting labels
-- Plain `list` and `env` commands for scripts and inaccessible terminals
-
-The CLI does not claim environment variables are hot-reloadable. Settings that
-already live in the server SQLite database are labelled as live-ready; they
-will be connected to a local authenticated management API in the next phase.
+<br />
 
 ## Install
 
@@ -55,11 +38,14 @@ Full documentation: [docs.gryt.chat/docs/cli](https://docs.gryt.chat/docs/cli).
 | `↑` / `↓` or `k` / `j` | Select server |
 | `n` | New server wizard |
 | `e` | Edit selected server |
+| `c` | Change the settings the server keeps in its own database |
+| `enter` | One server, with its addresses grouped by who they are for |
 | `s` | Start |
 | `x` | Stop |
 | `r` | Restart |
 | `l` | Recent logs |
 | `g` | Refresh health |
+| `u` | Update, when one is available |
 | `q` | Quit |
 
 The wizard uses `Enter` to advance/save, `Shift+Tab` to move back, arrow keys to
@@ -82,13 +68,18 @@ gryt/
 Set `GRYT_CONFIG_DIR` to use another root. Profile directories and files are
 created with private permissions where the operating system supports them.
 
-## Runtime settings roadmap
+## Changing a running server
 
-The server already stores its name, description, discovery flag, join policy,
-LAN-open mode, upload limits, profanity settings, and channels in SQLite. The
-next server change should add a local authenticated management endpoint around
-that model and introduce a persisted connection gate. See
-[`docs/runtime-settings.md`](docs/runtime-settings.md) for the proposed boundary.
+Some of a server's settings live in its database rather than its environment:
+who may join, whether it advertises itself over mDNS, whether the LAN is open,
+and what it does about profanity. `c` changes those on a running server, through
+the local management API the server publishes on loopback.
+
+That needs server 1.5.0 or newer. Against anything older the screen says the
+server has no management API and tells you to update its image and restart it.
+
+Everything else lives in the generated `.env` and takes effect on restart. The
+settings screen and `gryt env` both label which is which.
 
 ## Development
 
@@ -109,4 +100,4 @@ in one place rather than ten, so it cannot fall out of step across repositories.
 
 ## License
 
-AGPL-3.0-or-later, matching the Gryt project.
+[AGPL-3.0](https://github.com/Gryt-chat/gryt/blob/main/LICENSE) — Part of [Gryt](https://github.com/Gryt-chat/gryt)
