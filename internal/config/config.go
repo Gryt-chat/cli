@@ -55,6 +55,15 @@ type Profile struct {
 	// Signs this server's session tokens. Generated once and kept, because
 	// rotating it signs everybody out.
 	JWTSecret string `json:"jwtSecret,omitempty"`
+	// Authorises the CLI against this server's management API. Kept here
+	// rather than in the generated .env on purpose: .env is the file somebody
+	// pastes into a bug report or copies to another machine, and this is a
+	// credential for a running server. It reaches the container through the
+	// compose command's own environment instead.
+	AdminToken string `json:"adminToken,omitempty"`
+	// The management API's port on this machine. Published to loopback only,
+	// and its own port because the server's main one is reachable by design.
+	AdminPort int `json:"adminPort,omitempty"`
 	// Filled in when the server uses this machine's shared object store, so
 	// the generated files can name its credentials. Deliberately not
 	// persisted: the shared secrets file owns them, and copying them into
@@ -77,6 +86,7 @@ func NewProfile(name string) Profile {
 		VoiceMaxUsers:  0,
 		StorageBackend: SharedStorage,
 		JWTSecret:      NewSecret(),
+		AdminToken:     NewSecret(),
 		ExtraEnv:       map[string]string{},
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -205,8 +215,23 @@ func (s *Store) List() ([]Profile, error) {
 			// every other server down with it.
 			_ = s.Save(profile)
 		}
+		if profile.AdminToken == "" {
+			profile.AdminToken = NewSecret()
+			_ = s.Save(profile)
+		}
 		profiles = append(profiles, profile)
 	}
+	// A management port cannot be chosen while the profiles are still being
+	// read, because picking one needs to know what every other server already
+	// claims. Second pass, once they are all here.
+	for i := range profiles {
+		if profiles[i].AdminPort != 0 {
+			continue
+		}
+		profiles[i].AdminPort = FreeAdminPort(PortsInUse(profiles))
+		_ = s.Save(profiles[i])
+	}
+
 	sort.Slice(profiles, func(i, j int) bool {
 		return strings.ToLower(profiles[i].Name) < strings.ToLower(profiles[j].Name)
 	})

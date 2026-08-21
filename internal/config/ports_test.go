@@ -50,3 +50,23 @@ func TestPortsInUseReadsTheProfiles(t *testing.T) {
 		t.Fatalf("PortsInUse = %v", ports)
 	}
 }
+
+// The probe used net.Listen("tcp", "0.0.0.0:port"), which opens a dual-stack
+// socket and binds happily while something else already holds the IPv4 port.
+// Docker publishes on IPv4, so the CLI handed out ports that were already
+// taken and the start failed with "port is already allocated".
+func TestPortFreeAsksAboutIPv4(t *testing.T) {
+	held, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Skip("cannot open an IPv4 listener here")
+	}
+	defer held.Close()
+
+	port := held.Addr().(*net.TCPAddr).Port
+	if portFree(port) {
+		t.Fatalf("port %d is held on IPv4 and the probe called it free", port)
+	}
+	if got := FreePort([]int{}); got == port {
+		t.Fatalf("FreePort handed out %d, which is held", port)
+	}
+}

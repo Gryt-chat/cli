@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -84,8 +85,21 @@ func (Docker) Status(ctx context.Context, profile config.Profile) State {
 }
 
 func composeCommand(ctx context.Context, dir string, args ...string) error {
+	return composeCommandEnv(ctx, dir, nil, args...)
+}
+
+// composeCommandEnv runs compose with extra environment of its own.
+//
+// The management token reaches the container this way rather than through
+// .env: compose substitutes ${GRYT_ADMIN_TOKEN} in the generated file from its
+// own environment, so the value lives in the CLI's profile and never in a file
+// somebody might paste into a bug report or copy to another machine.
+func composeCommandEnv(ctx context.Context, dir string, env []string, args ...string) error {
 	base := []string{"compose", "--project-directory", dir, "--file", dir + "/compose.yaml"}
 	cmd := exec.CommandContext(ctx, "docker", append(base, args...)...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stderr bytes.Buffer
 	cmd.Stdout = &stderr
 	cmd.Stderr = &stderr
@@ -133,16 +147,26 @@ func (Docker) EnsureShared(ctx context.Context, dir string) error {
 	return composeCommand(ctx, dir, "up", "--detach", "--remove-orphans")
 }
 
-func (Docker) Start(ctx context.Context, _ config.Profile, dir string) error {
-	return composeCommand(ctx, dir, "up", "--detach", "--remove-orphans")
+func (Docker) Start(ctx context.Context, profile config.Profile, dir string) error {
+	return composeCommandEnv(ctx, dir, adminEnv(profile), "up", "--detach", "--remove-orphans")
+}
+
+// adminEnv carries the management token into the compose invocation. Empty
+// when the profile has none, in which case the generated file substitutes an
+// empty string and the server starts no management listener at all.
+func adminEnv(profile config.Profile) []string {
+	if profile.AdminToken == "" {
+		return nil
+	}
+	return []string{"GRYT_ADMIN_TOKEN=" + profile.AdminToken}
 }
 
 func (Docker) Stop(ctx context.Context, _ config.Profile, dir string) error {
 	return composeCommand(ctx, dir, "down")
 }
 
-func (Docker) Restart(ctx context.Context, _ config.Profile, dir string) error {
-	return composeCommand(ctx, dir, "restart")
+func (Docker) Restart(ctx context.Context, profile config.Profile, dir string) error {
+	return composeCommandEnv(ctx, dir, adminEnv(profile), "restart")
 }
 
 func (Docker) ContainerRunning(ctx context.Context, name string) bool {

@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Gryt-chat/cli/internal/config"
+	"github.com/Gryt-chat/cli/internal/management"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
 	"github.com/Gryt-chat/cli/internal/updater"
 )
@@ -25,6 +26,7 @@ const (
 	modeWizard
 	modeLogs
 	modeDetail
+	modeSettings
 )
 
 type profilesLoaded struct {
@@ -114,6 +116,13 @@ type Model struct {
 	// single busy flag that froze the whole dashboard for the length of a
 	// docker command.
 	working map[string]bool
+	// The settings screen's state. Held on the model rather than fetched per
+	// draw, because reading them is a request to the server.
+	settings        *management.Settings
+	settingsCursor  int
+	settingsBusy    bool
+	settingsErr     string
+	settingsErrKind error
 	// True while a refresh is in flight, so ticks do not stack up behind a
 	// slow health check.
 	refreshing bool
@@ -475,6 +484,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case settingsLoaded:
+		m.settingsBusy = false
+		if msg.err != nil {
+			m.settingsErr, m.settingsErrKind = settingsErrorText(msg.err), msg.err
+		} else {
+			m.settings, m.settingsErr, m.settingsErrKind = msg.settings, "", nil
+		}
+
 	case publicAddressFound:
 		m.publicIP = msg.ip
 
@@ -525,6 +542,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode, m.logs = modeDashboard, ""
 		}
 		return m, nil
+	}
+	if m.mode == modeSettings {
+		if !isKey {
+			return m, nil
+		}
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.mode = modeDashboard
+			return m, nil
+		}
+		return m.settingsKey(key.String(), profile)
 	}
 	if m.mode == modeDetail && isKey && (key.String() == "esc" || key.String() == "q") {
 		m.mode = modeDashboard
@@ -608,6 +636,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.lookUpPublicAddress()
 		}
 		return m, nil
+	case "c":
+		if hasProfile {
+			m.mode, m.settings, m.settingsErr, m.settingsErrKind = modeSettings, nil, "", nil
+			m.settingsCursor = 0
+			return m, m.loadSettings(profile)
+		}
 	case "l":
 		if selected, ok := m.selectedEntry(); ok && selected.kind == entryShared {
 			m.notice, m.err = "Logs · "+selected.label, ""
@@ -638,6 +672,8 @@ func (m Model) View() tea.View {
 		content = m.viewLogs()
 	case modeDetail:
 		content = m.viewDetail()
+	case modeSettings:
+		content = m.viewSettings()
 	default:
 		content = m.viewDashboard()
 	}
@@ -819,7 +855,7 @@ func (m Model) viewDetail() string {
 	}
 	glyph, word, tone := m.stateOf(profile)
 	head := m.header(tone.Render(glyph + " " + word))
-	keys := " esc back   s start   x stop   r restart   l logs   e edit"
+	keys := " esc back   s start   x stop   r restart   l logs   c settings   e edit"
 	if m.updateTag != "" {
 		keys = " u update  " + keys
 	}
@@ -938,7 +974,7 @@ func (m Model) dashboardKeys() string {
 			}
 			parts = append(parts, "l logs")
 			if selected.kind == entryServer {
-				parts = append(parts, "e edit")
+				parts = append(parts, "c settings", "e edit")
 			}
 		}
 	}
