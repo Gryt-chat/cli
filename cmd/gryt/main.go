@@ -35,6 +35,8 @@ func main() {
 			return
 		case "update":
 			os.Exit(runUpdate(args[1:]))
+		case "channel":
+			os.Exit(runChannel(store, args[1:]))
 		case "doctor":
 			os.Exit(runDoctor(store, root))
 		case "list":
@@ -95,6 +97,28 @@ func runUpdate(args []string) int {
 	}
 	fmt.Printf("Updated to %s\n", release.Tag)
 	return 0
+}
+
+// runChannel reads or sets the release channel this machine follows.
+func runChannel(store *config.Store, args []string) int {
+	if len(args) == 0 {
+		fmt.Println(store.Preferences().Channel)
+		return 0
+	}
+	switch args[0] {
+	case config.ChannelStable, config.ChannelBeta:
+		if err := store.SetChannel(args[0]); err != nil {
+			fatal(err)
+		}
+		prefs := store.Preferences()
+		fmt.Printf("Channel is now %s.\n", prefs.Channel)
+		fmt.Printf("gryt update follows it, and servers you start run ghcr.io/gryt-chat/*:%s.\n", prefs.ImageTag())
+		fmt.Println("Existing servers keep their current image until you restart them.")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "gryt: channel must be %s or %s\n", config.ChannelStable, config.ChannelBeta)
+		return 1
+	}
 }
 
 func runDoctor(store *config.Store, root string) int {
@@ -170,6 +194,8 @@ func printHelp() {
 
 Usage:
   gryt                 Open the interactive server manager
+  gryt channel         Print the release channel this machine follows
+  gryt channel beta    Follow beta for this CLI and the servers it starts
   gryt update          Replace this binary with the newest release
   gryt update --check  Report whether a newer release exists, and change nothing
   gryt doctor          Check Docker and the config directory, and say what to fix

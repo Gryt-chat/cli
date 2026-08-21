@@ -208,7 +208,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 		}
 		worker = fmt.Sprintf(`
   image-worker:
-    image: ghcr.io/gryt-chat/image-worker:latest
+    image: ghcr.io/gryt-chat/image-worker:`+s.Preferences().ImageTag()+`
     container_name: gryt-%s-image-worker
     environment:
       DATA_DIR: /data
@@ -231,7 +231,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 
 	content := fmt.Sprintf(`services:
   server:
-    image: ghcr.io/gryt-chat/server:latest
+    image: ghcr.io/gryt-chat/server:%s
     container_name: gryt-%s
     env_file:
       - .env
@@ -263,7 +263,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 networks:
   `+SharedNetwork+`:
     external: true
-`, profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, worker)
+`, s.Preferences().ImageTag(), profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, worker)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}

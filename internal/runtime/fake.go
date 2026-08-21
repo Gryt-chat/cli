@@ -12,6 +12,7 @@ type Fake struct {
 	Log           string
 	SharedStarted bool
 	Containers    map[string]bool
+	Env           map[string]string
 }
 
 func (f *Fake) Available(context.Context) error { return f.Err }
@@ -42,6 +43,9 @@ func (f *Fake) Stop(_ context.Context, p config.Profile, _ string) error {
 func (f *Fake) Restart(context.Context, config.Profile, string) error { return f.Err }
 func (f *Fake) ContainerRunning(_ context.Context, name string) bool {
 	return f.Containers[name]
+}
+func (f *Fake) ContainerEnv(_ context.Context, _ string, key string) string {
+	return f.Env[key]
 }
 func (f *Fake) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
 	return f.Log, f.Err
