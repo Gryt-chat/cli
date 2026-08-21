@@ -298,3 +298,52 @@ func TestSavingAStoppedServerDoesNotStartIt(t *testing.T) {
 		t.Fatal("saving a stopped server started it")
 	}
 }
+
+func TestVersionLineShowsAnAvailableUpgrade(t *testing.T) {
+	m, _ := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	m.versions = map[string]string{profile.ID: "1.4.6"}
+	m.serverLatest = "v1.4.8"
+
+	line := m.versionLine(profile)
+	if !strings.Contains(line, "1.4.6") || !strings.Contains(line, "1.4.8") || !strings.Contains(line, "→") {
+		t.Fatalf("expected the old and new version either side of an arrow, got %q", line)
+	}
+	// The v belongs to the tag, not to something somebody reads.
+	if strings.Contains(line, "v1.4.8") {
+		t.Fatalf("the tag's leading v leaked into the display: %q", line)
+	}
+}
+
+func TestVersionLineSaysWhenThereIsNothingToDo(t *testing.T) {
+	m, _ := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	m.versions = map[string]string{profile.ID: "1.4.8"}
+	m.serverLatest = "v1.4.8"
+
+	if line := m.versionLine(profile); !strings.Contains(line, "up to date") {
+		t.Fatalf("got %q", line)
+	}
+}
+
+// A stopped server has no container to read a version off, and an empty line
+// is better than a guess.
+func TestVersionLineIsEmptyWithoutAVersion(t *testing.T) {
+	m, _ := modelWith(t, "Alpha")
+	if line := m.versionLine(m.profiles[0]); line != "" {
+		t.Fatalf("got %q", line)
+	}
+}
+
+// A server ahead of the newest published release, which is what a beta looks
+// like on the stable channel, is not an upgrade prompt.
+func TestAServerAheadOfTheReleaseIsNotPrompted(t *testing.T) {
+	m, _ := modelWith(t, "Alpha")
+	profile := m.profiles[0]
+	m.versions = map[string]string{profile.ID: "1.5.0"}
+	m.serverLatest = "v1.4.8"
+
+	if line := m.versionLine(profile); strings.Contains(line, "→") {
+		t.Fatalf("offered a downgrade: %q", line)
+	}
+}
