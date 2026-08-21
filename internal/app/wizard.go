@@ -41,10 +41,13 @@ type wizardField struct {
 }
 
 type wizard struct {
-	fields   []wizardField
-	step     int
-	err      string
-	original *config.Profile
+	// Chosen when the wizard opens, so a server created here has a management
+	// port before anything tries to manage it.
+	adminPort int
+	fields    []wizardField
+	step      int
+	err       string
+	original  *config.Profile
 }
 
 // inputField starts empty with the default shown as the placeholder, rather
@@ -158,12 +161,15 @@ func (f wizardField) value() string {
 // taken names the ports other servers on this machine already claim.
 func newWizard(taken []int) wizard {
 	port := strconv.Itoa(config.FreePort(taken))
+	// Chosen here rather than left to the profile store, so a server created
+	// now has one before anything tries to manage it.
+	adminPort := config.FreeAdminPort(append(append([]int{}, taken...), config.FreePort(taken)))
 	levels := config.SecurityLevels()
 	security := make([]string, len(levels))
 	for i, level := range levels {
 		security[i] = string(level)
 	}
-	w := wizard{fields: []wizardField{
+	w := wizard{adminPort: adminPort, fields: []wizardField{
 		inputField("name", "Server name", "Shown to people who connect.", "", "My Gryt Server"),
 		inputField("host", "Bind address", "0.0.0.0 accepts connections from other machines. Use 127.0.0.1 to keep the server on this one.", "0.0.0.0", "0.0.0.0"),
 		inputField("port", "Port", "TCP port exposed by Docker and used by clients. Offered because nothing else on this machine holds it.", port, port),
@@ -525,5 +531,8 @@ func (w wizard) profile() (config.Profile, error) {
 	}
 	profile.SFUWebSocketURL = strings.Join(endpoints, ",")
 	profile.StorageBackend = values["storage"]
+	if profile.AdminPort == 0 {
+		profile.AdminPort = w.adminPort
+	}
 	return profile, profile.Validate()
 }

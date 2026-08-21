@@ -237,6 +237,16 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       - .env
     ports:
       - "%s:%d:%d"
+      # Management, on loopback only. The port above is bound to whatever the
+      # operator chose and is meant to be reachable; this one never is. Docker
+      # enforces that at the host, before anything reaches the container.
+      - "127.0.0.1:%d:%d"
+    environment:
+      # Substituted from the environment the CLI runs docker compose with, so
+      # the token never lands in .env — the file somebody pastes into a bug
+      # report or copies to another machine.
+      GRYT_ADMIN_TOKEN: ${GRYT_ADMIN_TOKEN:-}
+      GRYT_ADMIN_PORT: "%d"
     volumes:
       - ./data:/data
     networks:
@@ -253,7 +263,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 networks:
   `+SharedNetwork+`:
     external: true
-`, profile.ID, profile.Host, profile.Port, profile.Port, profile.Port, worker)
+`, profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, worker)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}
