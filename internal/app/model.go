@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	tea "charm.land/bubbletea/v2"
@@ -231,8 +233,18 @@ func (m Model) startWork(key string) Model {
 	return m
 }
 
+// saveProfile writes the server's files and, when that changed something a
+// running container is already using, recreates it so the change takes effect.
+//
+// Saving used to write .env and compose.yaml and stop. Editing a running server
+// rewrote both, reported "Saved", and left the container running the old
+// values, with nothing to say so. The settings appeared to change and did not.
 func (m Model) saveProfile(profile config.Profile) tea.Cmd {
+	dir := m.store.ServerDir(profile.ID)
+	running := m.states[profile.ID] == gruntime.StateRunning
 	return func() tea.Msg {
+		before := readFiles(dir)
+
 		if err := m.store.Save(profile); err != nil {
 			return operationDone{err: err}
 		}
@@ -242,8 +254,30 @@ func (m Model) saveProfile(profile config.Profile) tea.Cmd {
 		if _, err := m.store.WriteCompose(profile); err != nil {
 			return operationDone{err: err}
 		}
-		return operationDone{message: fmt.Sprintf("Saved %s", profile.Name)}
+
+		if !running || readFiles(dir) == before {
+			return operationDone{message: fmt.Sprintf("Saved %s", profile.Name)}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+
+		// up, not restart. A port or a volume change lands in compose.yaml, and
+		// `docker compose restart` restarts the container it already built
+		// rather than building the one the file now describes.
+		if err := m.runtime.Start(ctx, profile, dir); err != nil {
+			return operationDone{err: fmt.Errorf("saved, but applying it failed: %w", err)}
+		}
+		return operationDone{message: fmt.Sprintf("Saved %s and restarted it to apply the change", profile.Name)}
 	}
+}
+
+// readFiles returns the generated files as one string, for telling a save that
+// changed something from a save that changed nothing.
+func readFiles(dir string) string {
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	compose, _ := os.ReadFile(filepath.Join(dir, "compose.yaml"))
+	return string(env) + "\x00" + string(compose)
 }
 
 func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
