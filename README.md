@@ -13,11 +13,11 @@ curl -fsSL https://get.gryt.chat | sh
 ```
 
 The script picks the build for your platform, checks it against the release
-checksums, and installs to `/usr/local/bin` if that is writable or
+checksums, and installs to `/usr/local/bin` if that's writable or
 `~/.local/bin` if not. `GRYT_VERSION` installs a specific tag instead of the
 newest release, and `GRYT_INSTALL_DIR` changes where the binary lands.
 
-It does not cover Windows. Download the `.zip` from the
+It doesn't cover Windows. Download the `.zip` from the
 [releases page](https://github.com/Gryt-chat/cli/releases) instead.
 
 From source, with Go 1.25 or newer:
@@ -39,7 +39,7 @@ Full documentation: [docs.gryt.chat/docs/cli](https://docs.gryt.chat/docs/cli).
 | `n` | New server wizard |
 | `e` | Edit selected server |
 | `c` | Change the settings the server keeps in its own database |
-| `enter` | One server, with its addresses grouped by who they are for |
+| `enter` | One server, with its addresses grouped by who they're for |
 | `s` | Start |
 | `x` | Stop |
 | `r` | Restart |
