@@ -89,6 +89,11 @@ go vet ./...
 go run ./cmd/gryt
 ```
 
+## Issues
+
+Please report bugs and request features in the
+[main Gryt repository](https://github.com/Gryt-chat/gryt/issues).
+
 ## Sponsors
 
 What sponsoring pays for, the tiers, and everyone who has sponsored:
