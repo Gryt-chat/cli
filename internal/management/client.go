@@ -1,8 +1,5 @@
-// Package management talks to a server's local management API.
-//
-// The API only listens when the server was started with a token, and the
-// generated Compose file publishes it to 127.0.0.1 only, so this reaches a
-// server running on this machine and nothing else can reach it at all.
+// Package management talks to a server's local management API, which only listens when the
+// server was started with a token and is published to 127.0.0.1 only.
 package management
 
 import (

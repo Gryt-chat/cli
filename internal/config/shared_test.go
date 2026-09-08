@@ -54,9 +54,8 @@ func TestServerComposeJoinsTheSharedNetworkWithoutCreatingIt(t *testing.T) {
 	}
 }
 
-// The two halves of the SFU configuration answer different questions, and
-// confusing them is how voice half-works: the server talks to the container,
-// the client is told an address it can actually reach.
+// The two halves of the SFU configuration answer different questions, and confusing them is
+// how voice half-works: the server talks to the container, the client to a reachable address.
 func TestSFUEnvSplitsInternalFromPublic(t *testing.T) {
 	profile := NewProfile("My Server")
 
@@ -165,9 +164,8 @@ func TestSharedStorageAddsAPerServerImageWorker(t *testing.T) {
 	}
 }
 
-// gryt env reported STORAGE_BACKEND=s3 with no S3 settings under it, while the
-// generated .env had all of them, because the credentials were attached in one
-// path and not the other.
+// gryt env reported STORAGE_BACKEND=s3 with no S3 settings under it while the generated .env
+// had all of them, because the credentials were attached in one path and not the other.
 func TestSettingsResolvesTheSharedCredentials(t *testing.T) {
 	store := NewStore(t.TempDir())
 	settings, err := store.Settings(NewProfile("Env Test"))

@@ -11,24 +11,14 @@ import (
 	"time"
 )
 
-// PublicLookupDisabled reports whether the operator has asked not to be told
-// their public address. The lookup leaves the machine, so it gets an off switch
-// and the docs name the host it contacts.
+// PublicLookupDisabled reports whether the operator has asked not to be told their public
+// address. The lookup leaves the machine, so it has an off switch and the docs name the host.
 func PublicLookupDisabled() bool {
 	return strings.TrimSpace(os.Getenv("GRYT_NO_PUBLIC_LOOKUP")) != ""
 }
 
-// PublicAddress reports the address this machine is reachable at from outside
-// its own network.
-//
-// Interfaces cannot answer this. A machine behind NAT holds a private address
-// and has no way of knowing what the world sees, so something outside has to
-// say. STUN exists for precisely that question, the SFU already depends on it
-// for voice, and the default server is the one already named in the shared
-// stack's configuration — so this adds no new dependency and no new party.
-//
-// A machine that genuinely holds a public address on an interface is answered
-// from the interface, and nothing is sent at all.
+// PublicAddress reports the address this machine is reachable at from outside. Interfaces
+// cannot answer it, so STUN does — the server the shared stack already names.
 func PublicAddress(ctx context.Context, server string) (string, error) {
 	for _, address := range LocalAddresses() {
 		if ip := net.ParseIP(address.IP); ip != nil && !ip.IsPrivate() {
@@ -38,19 +28,16 @@ func PublicAddress(ctx context.Context, server string) (string, error) {
 	if PublicLookupDisabled() {
 		return "", errors.New("public address lookup is turned off")
 	}
-	// IPv4 first. A dual-stack machine reaches Google's STUN over IPv6 and is
-	// told its IPv6 address, which is correct and almost never what somebody
-	// wants: port forwarding, and most of what people hand out, is v4. Fall
-	// back to whatever the network offers when there is no v4 path at all.
+	// IPv4 first. A dual-stack machine is told its IPv6 address, which is correct and almost
+	// never what somebody wants. Fall back when there is no v4 path at all.
 	if address, err := stunBinding(ctx, "udp4", server); err == nil {
 		return address, nil
 	}
 	return stunBinding(ctx, "udp", server)
 }
 
-// stunBinding sends one STUN binding request and reads the mapped address out
-// of the reply. RFC 5389 in about forty lines: a fixed header, a random
-// transaction id, and one attribute worth reading.
+// stunBinding sends one STUN binding request and reads the mapped address out of the reply:
+// RFC 5389 in about forty lines, and one attribute worth reading.
 func stunBinding(ctx context.Context, network, server string) (string, error) {
 	deadline, ok := ctx.Deadline()
 	if !ok {

@@ -6,21 +6,16 @@ import (
 	"path/filepath"
 )
 
-// SharedSecrets are the credentials for the object store every server on this
-// machine shares. Generated once and kept, because rotating them orphans every
-// upload already written under them.
+// SharedSecrets are the credentials for the object store every server on this machine
+// shares. Generated once and kept: rotating them orphans every upload already written.
 type SharedSecrets struct {
 	MinIOUser     string `json:"minioUser"`
 	MinIOPassword string `json:"minioPassword"`
 	Bucket        string `json:"bucket"`
 }
 
-// Secrets loads the shared credentials, creating them on first use.
-//
-// Not "minioadmin/minioadmin" as the compose examples use. Those are fine in a
-// file somebody reads before deploying and edits; they are not fine written
-// automatically onto a machine where the object store is published and nobody
-// was ever prompted to change them.
+// Secrets loads the shared credentials, creating them on first use. Not
+// "minioadmin/minioadmin": nobody is ever prompted to change what is written automatically.
 func (s *Store) Secrets() (SharedSecrets, error) {
 	path := filepath.Join(s.SharedDir(), "secrets.json")
 

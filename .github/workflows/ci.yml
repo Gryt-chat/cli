@@ -20,3 +20,10 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./cmd/gryt
+
+      # No comment runs past two lines. The script carries the list of paths still
+      # to be swept, and that list only ever shrinks.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-comment-length.mjs

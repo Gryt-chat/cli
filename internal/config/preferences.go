@@ -13,12 +13,8 @@ const (
 	ChannelBeta   = "beta"
 )
 
-// Preferences are machine-wide rather than per-server.
-//
-// The channel covers both the CLI's own updates and the image tag its servers
-// run, deliberately as one switch. A beta CLI managing stable servers, or the
-// reverse, is the combination that produces confusing bug reports: the two
-// move together or the pairing means nothing.
+// Preferences are machine-wide rather than per-server. The channel covers the CLI's own
+// updates and its servers' image tag as one switch: the two move together or mean nothing.
 type Preferences struct {
 	Channel string `json:"channel"`
 }

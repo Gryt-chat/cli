@@ -23,9 +23,8 @@ func TestBetaChannelChangesTheImageTag(t *testing.T) {
 	}
 }
 
-// Anything that is not a channel this CLI knows falls back to stable rather
-// than being written through, so a typo cannot leave a machine following a
-// channel that does not exist.
+// Anything that is not a channel this CLI knows falls back to stable rather than being
+// written through, so a typo cannot leave a machine following a channel that does not exist.
 func TestAnUnknownChannelFallsBackToStable(t *testing.T) {
 	store := NewStore(t.TempDir())
 	if err := store.SetChannel("weekly"); err != nil {

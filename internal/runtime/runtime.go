@@ -34,9 +34,8 @@ type Manager interface {
 	Stop(context.Context, config.Profile, string) error
 	Restart(context.Context, config.Profile, string) error
 	Logs(context.Context, config.Profile, string, int) (string, error)
-	// ContainerRunning reports whether one named container is up. The shared
-	// project's pieces are addressed by container name because they are not
-	// any server's, so there is no profile to ask about.
+	// ContainerRunning reports whether one named container is up. The shared project's
+	// pieces are addressed by container name because they are not any server's.
 	ContainerRunning(context.Context, string) bool
 	// ContainerLogs reads one container's output, for the same reason.
 	ContainerLogs(context.Context, string, int) (string, error)
@@ -48,14 +47,8 @@ type Manager interface {
 
 type Docker struct{}
 
-// Available reports the first thing standing between the operator and a
-// running container.
-//
-// This used to run `docker compose version` alone, which asks the client about
-// itself and never contacts the daemon: it passes with Docker Desktop
-// installed and shut down, which on macOS is the most likely thing to be
-// wrong. The checks live in internal/doctor so that this and `gryt doctor`
-// cannot disagree.
+// Available reports the first thing standing between the operator and a running container.
+// The checks live in internal/doctor, so this and `gryt doctor` cannot disagree.
 func (Docker) Available(ctx context.Context) error {
 	problems := doctor.Problems(doctor.Docker(ctx, doctor.Exec))
 	if len(problems) == 0 {
@@ -90,12 +83,8 @@ func composeCommand(ctx context.Context, dir string, args ...string) error {
 	return composeCommandEnv(ctx, dir, nil, args...)
 }
 
-// composeCommandEnv runs compose with extra environment of its own.
-//
-// The management token reaches the container this way rather than through
-// .env: compose substitutes ${GRYT_ADMIN_TOKEN} in the generated file from its
-// own environment, so the value lives in the CLI's profile and never in a file
-// somebody might paste into a bug report or copy to another machine.
+// composeCommandEnv runs compose with extra environment of its own. The management token
+// reaches the container this way rather than through .env, which people paste into reports.
 func composeCommandEnv(ctx context.Context, dir string, env []string, args ...string) error {
 	base := []string{"compose", "--project-directory", dir, "--file", dir + "/compose.yaml"}
 	cmd := exec.CommandContext(ctx, "docker", append(base, args...)...)
@@ -111,15 +100,8 @@ func composeCommandEnv(ctx context.Context, dir string, env []string, args ...st
 	return nil
 }
 
-// composeReason picks the line worth showing out of compose's output.
-//
-// Compose narrates to stderr, so a failed run opens with several "Container X
-// Creating" lines and puts the reason further down. Returning the whole buffer
-// meant the dashboard, which has one line to show an error in, displayed the
-// first of those — so a start that failed reported something that reads like a
-// start that is working.
-//
-// The reason is at the end, and is usually the only line that says so.
+// composeReason picks the line worth showing out of compose's output. The reason is at the
+// end; returning the whole buffer showed "Container X Creating" for a failed start.
 func composeReason(output string, fallback error) string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 
@@ -153,9 +135,8 @@ func (Docker) Start(ctx context.Context, profile config.Profile, dir string) err
 	return composeCommandEnv(ctx, dir, adminEnv(profile), "up", "--detach", "--remove-orphans")
 }
 
-// adminEnv carries the management token into the compose invocation. Empty
-// when the profile has none, in which case the generated file substitutes an
-// empty string and the server starts no management listener at all.
+// adminEnv carries the management token into the compose invocation. Empty when the profile
+// has none, in which case the server starts no management listener at all.
 func adminEnv(profile config.Profile) []string {
 	if profile.AdminToken == "" {
 		return nil
@@ -181,12 +162,8 @@ func (Docker) ContainerRunning(ctx context.Context, name string) bool {
 	return strings.TrimSpace(string(out)) == "true"
 }
 
-// ContainerEnv reads a variable out of a running container.
-//
-// This is how the CLI knows which version a server is running. The image bakes
-// SERVER_VERSION in at build time, so it is right there and needs nothing from
-// the server itself — which also means it works on images built before the
-// server had any way to report it.
+// ContainerEnv reads a variable out of a running container. The image bakes SERVER_VERSION
+// in at build time, so this works on images built before the server could report it.
 func (Docker) ContainerEnv(ctx context.Context, name, key string) string {
 	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format",
 		"{{range .Config.Env}}{{println .}}{{end}}", name)

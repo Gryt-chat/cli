@@ -1,10 +1,5 @@
-// Package doctor answers "why did that not work" before the operator has to
-// ask it.
-//
-// Everything here is about the machine rather than about Gryt: whether Docker
-// is installed, whether its daemon is up, whether the config directory can be
-// written. The CLI used to find all of this out by running docker compose and
-// showing whatever came back, which is accurate and unreadable.
+// Package doctor answers "why did that not work" before the operator has to ask. Everything
+// here is about the machine rather than Gryt: Docker installed, daemon up, directory writable.
 package doctor
 
 import (
@@ -62,9 +57,8 @@ func Problems(checks []Check) []Check {
 	return problems
 }
 
-// Docker is the subset that decides whether a deployment can be started at
-// all. Kept separate so the pre-flight check before an action and the doctor
-// command cannot drift apart.
+// Docker is the subset that decides whether a deployment can start at all. Kept separate so
+// the pre-flight check and the doctor command cannot drift apart.
 func Docker(ctx context.Context, probe Probe) []Check {
 	return []Check{dockerInstalled(), composePlugin(ctx, probe), daemonRunning(ctx, probe)}
 }
@@ -92,10 +86,8 @@ func composePlugin(ctx context.Context, probe Probe) Check {
 	return check
 }
 
-// The check the old one should have been. `docker compose version` asks the
-// client about itself and never contacts the daemon, so it passes with Docker
-// Desktop installed and shut down, which on macOS is the single most likely
-// thing to be wrong. `docker info` is the cheapest call that needs the daemon.
+// `docker compose version` asks the client about itself and never contacts the daemon, so it
+// passes with Docker Desktop shut down. `docker info` is the cheapest call that needs it.
 func daemonRunning(ctx context.Context, probe Probe) Check {
 	check := Check{Name: "Docker daemon"}
 	if err := probe(ctx, "docker", "info"); err != nil {
@@ -125,9 +117,8 @@ func configWritable(root string) Check {
 	return check
 }
 
-// Two servers on one port is a configuration mistake rather than a machine
-// one, and it is invisible until the second container fails to bind. The
-// wizard defaults every new server to 5000, so it is easy to arrive at.
+// Two servers on one port is a configuration mistake, invisible until the second container
+// fails to bind. The wizard defaults every new server to 5000, so it is easy to arrive at.
 func duplicatePorts(profiles []config.Profile) *Check {
 	seen := map[string]string{}
 	for _, profile := range profiles {
@@ -147,15 +138,8 @@ func duplicatePorts(profiles []config.Profile) *Check {
 	return &Check{Name: "Ports", OK: true, Detail: strconv.Itoa(len(profiles)) + " server(s), no clashes"}
 }
 
-// squattedPorts finds a server whose port is held by something that is not it.
-//
-// The discriminator is the answer, not whether the port can be bound.
-//
-// Binding was the first attempt and it was wrong: macOS allowed a bind of
-// 127.0.0.1:5000 while ControlCenter held *:5000 for AirPlay, so the check
-// concluded the port was free and never asked. Asking is the whole point. A
-// Gryt server replies to /health with 2xx; AirTunes replies 403; a stopped
-// server refuses the connection, which is not a problem and is skipped.
+// squattedPorts finds a server whose port is held by something that is not it. The
+// discriminator is the answer, not whether the port binds: macOS allowed both.
 func squattedPorts(ctx context.Context, profiles []config.Profile) *Check {
 	client := http.Client{Timeout: time.Second}
 	for _, profile := range profiles {
