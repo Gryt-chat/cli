@@ -48,19 +48,16 @@ func (p Profile) EnvSettings() []EnvSetting {
 		{Key: "GRYT_TRUSTED_PROXY_HOPS", Value: strconv.Itoa(p.TrustedProxyHops), Mode: ModeRestart},
 		{Key: "VOICE_MAX_USERS", Value: strconv.Itoa(p.VoiceMaxUsers), Mode: ModeRestart},
 		{Key: "STORAGE_BACKEND", Value: storageBackend(p.StorageBackend), Mode: ModeRestart},
-		// The server refuses to start without this, deliberately: it treats
-		// the placeholder as fatal rather than signing tokens with a value
-		// everybody knows.
+		// The server refuses to start without this, deliberately: it treats the placeholder
+		// as fatal rather than signing tokens with a value everybody knows.
 		{Key: "JWT_SECRET", Value: p.JWTSecret, Sensitive: true, Mode: ModeRestart},
 	}
-	// The server reaches the SFU over the shared network by container name.
-	// This is not the address clients dial: that is SFU_PUBLIC_HOST below,
-	// which depends on how this machine is reachable from wherever they are.
+	// The server reaches the SFU over the shared network by container name. Not the address
+	// clients dial: that is SFU_PUBLIC_HOST below.
 	settings = append(settings, EnvSetting{Key: "SFU_WS_HOST", Value: InternalSFUHost(), Mode: ModeRestart})
 
-	// What a client is told to connect to. Falls back to localhost, which is
-	// right for trying a server on the machine that hosts it and wrong for
-	// anything else, so the wizard asks.
+	// What a client is told to connect to. Falls back to localhost, which is right for
+	// trying a server on the machine that hosts it and wrong for anything else.
 	public := p.SFUWebSocketURL
 	if public == "" {
 		public = "ws://localhost:" + strconv.Itoa(SFUPort)
@@ -85,10 +82,8 @@ func (p Profile) EnvSettings() []EnvSetting {
 			EnvSetting{Key: "S3_SECRET_ACCESS_KEY", Value: p.SharedS3.MinIOPassword, Sensitive: true, Mode: ModeRestart},
 			EnvSetting{Key: "S3_BUCKET", Value: p.SharedS3.Bucket, Mode: ModeRestart},
 			EnvSetting{Key: "S3_FORCE_PATH_STYLE", Value: "true", Mode: ModeRestart},
-			// The image worker runs beside this server rather than in the
-			// shared project: it reads the job queue out of this server's
-			// SQLite database, so it needs this server's data directory and
-			// cannot be one process for all of them.
+			// The image worker runs beside this server rather than in the shared project:
+			// it reads the job queue out of this server's SQLite database.
 			EnvSetting{Key: "IMAGE_WORKER_URL", Value: "http://gryt-" + p.ID + "-image-worker:8080", Mode: ModeRestart},
 		)
 	}
@@ -108,9 +103,8 @@ func (p Profile) EnvSettings() []EnvSetting {
 	return settings
 }
 
-// storageBackend maps the wizard's answer onto what the server understands.
-// "shared" is a deployment arrangement rather than a backend: to the server it
-// is S3, pointed at the object store running beside it.
+// storageBackend maps the wizard's answer onto what the server understands. "shared" is a
+// deployment arrangement rather than a backend: to the server it is S3.
 func storageBackend(choice string) string {
 	if choice == SharedStorage {
 		return "s3"
@@ -139,13 +133,8 @@ func quoteEnv(value string) string {
 	return `"` + replacer.Replace(value) + `"`
 }
 
-// Settings resolves what this server's environment actually is.
-//
-// EnvSettings alone is not enough for a server on the shared object store: its
-// credentials live in the shared secrets file rather than on the profile, so
-// they have to be attached first. Doing that here rather than at each call site
-// is what stopped `gryt env` from reporting STORAGE_BACKEND=s3 with no S3
-// settings under it while the generated .env had all of them.
+// Settings resolves what this server's environment actually is. A server on the shared
+// object store keeps its credentials in the shared secrets file, so they attach here.
 func (s *Store) Settings(profile Profile) ([]EnvSetting, error) {
 	if profile.StorageBackend == SharedStorage {
 		secrets, err := s.Secrets()
@@ -196,10 +185,8 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 	}
 	path := filepath.Join(dir, "compose.yaml")
 
-	// The image worker reads the job queue out of this server's SQLite
-	// database, so it mounts this server's data directory and there is one per
-	// server. It cannot live in the shared project with the SFU and the object
-	// store, which serve every server from one process each.
+	// The image worker reads the job queue out of this server's SQLite database, so it
+	// mounts this server's data directory and there is one per server.
 	worker := ""
 	if profile.StorageBackend == SharedStorage {
 		secrets, err := s.Secrets()

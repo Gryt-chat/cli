@@ -29,13 +29,11 @@ type wizardField struct {
 	// What an empty field means. Shown as the placeholder and used when the
 	// field is left alone, so a default is never text you have to delete.
 	fallback string
-	// Which of choices is the one to pick when you have no reason to prefer
-	// another. Empty when the answer genuinely depends on the situation, so
-	// that the badge means something wherever it appears.
+	// Which of choices is the one to pick with no reason to prefer another. Empty when the
+	// answer depends on the situation, so the badge means something wherever it appears.
 	recommended string
-	// Set for a tick-list. Some questions have more than one right answer at
-	// the same time: a server reachable over a LAN and over the internet is
-	// reachable over both, and the client picks whichever is faster.
+	// Set for a tick-list. A server reachable over a LAN and over the internet is reachable
+	// over both, and the client picks whichever is faster.
 	options []multiOption
 	cursor  int
 }
@@ -50,15 +48,8 @@ type wizard struct {
 	original  *config.Profile
 }
 
-// inputField starts empty with the default shown as the placeholder, rather
-// than pre-filled with it.
-//
-// A pre-filled field puts the cursor at the end, so typing appends: changing
-// the port from 5000 to 5001 meant deleting four characters first, and typing
-// "uploads" into a bucket field holding "gryt" produced "grytuploads". bubbles
-// exposes no selection, so there is no select-on-focus to reach for. Leaving
-// the field empty and treating empty as the default gets the same result and
-// is less to explain.
+// inputField starts empty with the default as placeholder, rather than pre-filled: a
+// pre-filled field appends, so 5000 to 5001 meant deleting four characters first.
 func inputField(key, label, helper, fallback, placeholder string) wizardField {
 	input := textinput.New()
 	inputStyles := textinput.DefaultDarkStyles()
@@ -77,15 +68,8 @@ func inputField(key, label, helper, fallback, placeholder string) wizardField {
 	return wizardField{key: key, label: label, helper: helper, input: input, fallback: fallback}
 }
 
-// reachField asks where people will connect from, offering this machine's own
-// addresses rather than an empty box.
-//
-// It replaces a free-text "SFU WebSocket URL" with a `wss://…` placeholder,
-// which nobody who did not already know the answer could fill in, and getting
-// it wrong is how voice silently fails. The answers become SFU_PUBLIC_HOST,
-// which takes a comma-separated list: the client pings each and uses whichever
-// answers fastest, so ticking both a LAN address and a public one is a
-// sensible thing to do rather than a contradiction.
+// reachField asks where people will connect from, offering this machine's addresses. The
+// answers become SFU_PUBLIC_HOST, a list the client pings, so ticking both is sensible.
 func reachField() wizardField {
 	options := []multiOption{{
 		label:  "This machine only (localhost)",
@@ -115,10 +99,8 @@ func selectField(key, label, helper string, choices []string, current int) wizar
 	return wizardField{key: key, label: label, helper: helper, choices: choices, choice: current}
 }
 
-// recommend marks the choice to take when you have no reason to prefer
-// another. Deliberately not on every question: path-style addressing is right
-// for MinIO and wrong for AWS, so a badge there would be wrong half the time
-// and would teach people to ignore it on the questions where it is right.
+// recommend marks the choice to take with no reason to prefer another. Not on every
+// question: path-style addressing is right for MinIO and wrong for AWS.
 func recommend(field wizardField, choice string) wizardField {
 	field.recommended = choice
 	return field
@@ -130,9 +112,8 @@ func onlyWhen(field wizardField, key, value string) wizardField {
 	return field
 }
 
-// masked hides what is typed. Used for the one field here that is a secret
-// rather than merely sensitive: an access key ID identifies an account, but a
-// secret access key is the account.
+// masked hides what is typed, for the one field that is a secret rather than merely
+// sensitive: an access key ID identifies an account, a secret access key is the account.
 func masked(field wizardField) wizardField {
 	field.input.EchoMode = textinput.EchoPassword
 	return field
@@ -180,10 +161,8 @@ func newWizard(taken []int) wizard {
 		onlyWhen(inputField("domain", "Its address", "Include the scheme. Behind a reverse proxy with TLS this is wss://, otherwise ws:// and the port.", "", "wss://voice.example.com"), "reach", domainChoice),
 		recommend(selectField("storage", "Where do uploads go?", "Images, files and avatars people send to this server.", []string{"shared", "filesystem", "s3"}, 0), "shared"),
 
-		// Only reachable when the backend is s3. Asking six questions about
-		// object storage to somebody who picked the filesystem would be six
-		// steps of nothing, and leaving them out entirely is what shipped a
-		// backend that could be selected but never configured.
+		// Only reachable when the backend is s3. Six questions about object storage for
+		// somebody on the filesystem would be six steps of nothing.
 		onlyWhen(inputField("s3endpoint", "S3 endpoint", "Full URL of the S3 API. MinIO on the same host looks like http://minio:9000.", "", "https://s3.eu-central-1.amazonaws.com"), "storage", "s3"),
 		onlyWhen(inputField("s3bucket", "Bucket", "Must already exist. Gryt does not create it.", "gryt", "gryt"), "storage", "s3"),
 		onlyWhen(inputField("s3region", "Region", "Leave as auto for MinIO and most S3-compatible services.", "auto", "auto"), "storage", "s3"),
@@ -205,9 +184,8 @@ func wizardFromProfile(profile config.Profile) wizard {
 		"voice": strconv.Itoa(profile.VoiceMaxUsers), "proxy": strconv.Itoa(profile.TrustedProxyHops),
 		"sfu": profile.SFUWebSocketURL,
 	}
-	// Only override a default when the profile actually carries a value, or
-	// editing a filesystem server would blank the region and bucket defaults
-	// on the way past.
+	// Only override a default when the profile carries a value, or editing a filesystem
+	// server would blank the region and bucket defaults on the way past.
 	for key, env := range map[string]string{
 		"s3endpoint": "S3_ENDPOINT",
 		"s3bucket":   "S3_BUCKET",
@@ -232,9 +210,8 @@ func wizardFromProfile(profile config.Profile) wizard {
 			field.input.SetValue(value)
 		}
 		if field.key == "reach" && profile.SFUWebSocketURL != "" {
-			// An address this server uses that is not one of this machine's
-			// current ones came from the typed field, so tick that and put it
-			// back where it was entered.
+			// An address this server uses that is not one of this machine's current ones
+			// came from the typed field, so tick that and put it back.
 			var extra []string
 			for j := range field.options {
 				known := chosen[field.options[j].value]
@@ -266,9 +243,8 @@ func (w *wizard) focus() tea.Cmd {
 	for i := range w.fields {
 		w.fields[i].input.Blur()
 	}
-	// Only text fields have an input to focus. A tick-list and a one-of-many
-	// choice are built as bare structs, so their textinput is the zero value
-	// and focusing it panics.
+	// Only text fields have an input to focus. A tick-list and a one-of-many choice are
+	// bare structs, so their textinput is the zero value and focusing it panics.
 	field := w.fields[w.step]
 	if len(field.choices) == 0 && len(field.options) == 0 {
 		return w.fields[w.step].input.Focus()
@@ -315,9 +291,8 @@ func (w *wizard) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// s3EnvKeys are the variables the wizard owns when the backend is s3. They are
-// listed once so that switching back to the filesystem can clear exactly these
-// and leave anything an operator added by hand alone.
+// s3EnvKeys are the variables the wizard owns when the backend is s3, listed once so
+// switching back to the filesystem clears exactly these and leaves hand-set ones alone.
 var s3EnvKeys = []string{
 	"S3_ENDPOINT",
 	"S3_BUCKET",
@@ -361,9 +336,8 @@ func (w wizard) visible() []int {
 	return steps
 }
 
-// Position of the current step among the visible ones, and how many there are.
-// The count moves as the storage answer changes, which is honest: it is the
-// number of questions actually left.
+// Position of the current step among the visible ones, and how many there are. The count
+// moves as the storage answer changes, which is the number of questions actually left.
 func (w wizard) progress() (int, int) {
 	steps := w.visible()
 	for n, i := range steps {
@@ -402,14 +376,8 @@ func (w *wizard) previous() tea.Cmd {
 	return nil
 }
 
-// onLastStep reports whether enter should save rather than advance.
-//
-// The dashboard used to work this out for itself with
-// `step == len(fields)-1`, which was the same answer while every field was
-// always shown. Once fields became conditional the two definitions disagreed:
-// a filesystem server sits on step 8 of 8 while the last field in the slice is
-// the sixth S3 one, so enter fell through to next(), which had nowhere to go,
-// and the wizard could not be saved at all.
+// onLastStep reports whether enter should save rather than advance. `step == len(fields)-1`
+// disagreed once fields became conditional, and the wizard could not be saved at all.
 func (w wizard) onLastStep() bool {
 	steps := w.visible()
 	return len(steps) > 0 && w.step == steps[len(steps)-1]
@@ -485,11 +453,8 @@ func (w wizard) profile() (config.Profile, error) {
 	}
 	profile := config.NewProfile(values["name"])
 
-	// The S3 answers are environment variables rather than profile fields, so
-	// they travel in ExtraEnv next to anything set outside the wizard. Those
-	// other keys are preserved; the six below are rewritten from the answers,
-	// and cleared when the backend is not s3 so that credentials do not sit in
-	// the file for a backend nothing is using.
+	// The S3 answers are environment variables rather than profile fields, so they travel in
+	// ExtraEnv. The six below are rewritten from the answers and cleared when not s3.
 	extra := map[string]string{}
 	if w.original != nil {
 		profile.ID = w.original.ID
