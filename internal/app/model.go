@@ -39,9 +39,8 @@ type statusesLoaded struct {
 	containers map[string]bool
 	// Each running server's version, read off its container.
 	versions map[string]string
-	// Whether the SFU every server here shares is answering. A server can be
-	// running perfectly while voice is dead because the shared project is not
-	// up, and nothing on the dashboard used to say so.
+	// Whether the SFU every server here shares is answering. A server can be running
+	// perfectly while voice is dead because the shared project is not up.
 	sharedUp bool
 }
 type operationDone struct {
@@ -61,9 +60,8 @@ type logsLoaded struct {
 	err     error
 }
 
-// tick drives the dashboard's own refresh. Without it the status was whatever
-// it had been when you last pressed g, so a server that fell over looked fine
-// until you thought to ask.
+// tick drives the dashboard's own refresh. Without it the status was whatever it had been
+// when you last pressed g, so a server that fell over looked fine.
 type tick time.Time
 
 const (
@@ -109,9 +107,8 @@ type Model struct {
 	updateTag string
 	updating  bool
 	sharedUp  bool
-	// The address this machine answers on from outside its own network.
-	// Looked up once, when a detail view is first opened, because it leaves
-	// the machine and the table does not need it.
+	// The address this machine answers on from outside its own network. Looked up once,
+	// when a detail view is first opened, because it leaves the machine.
 	publicIP      string
 	publicChecked bool
 	versions      map[string]string
@@ -119,9 +116,8 @@ type Model struct {
 	// here is behind. Fetched once, with the CLI's own update check.
 	serverLatest string
 	containers   map[string]bool
-	// Which rows have an operation in flight, keyed by entry. Replaces a
-	// single busy flag that froze the whole dashboard for the length of a
-	// docker command.
+	// Which rows have an operation in flight, keyed by entry. Replaces a single busy flag
+	// that froze the whole dashboard for the length of a docker command.
 	working map[string]bool
 	// The settings screen's state. Held on the model rather than fetched per
 	// draw, because reading them is a request to the server.
@@ -143,16 +139,11 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadProfiles(), m.checkForUpdate(), m.checkServerRelease(), tickAfter(statusInterval))
 }
 
-// checkForUpdate asks GitHub which release is newest, once, at startup.
-//
-// It fails silently. Somebody managing a server on a machine with no route to
-// the internet should see their servers, not an error about a version check
-// they did not ask for.
-// lookUpPublicAddress asks what this machine looks like from outside.
-//
-// Fails silently. Somebody on a network with no route out, or who has turned
-// the lookup off, should see their server rather than an error about a question
-// they did not ask.
+// checkForUpdate asks GitHub which release is newest, once, at startup. It fails silently:
+// somebody with no route out should see their servers, not a version-check error.
+
+// lookUpPublicAddress asks what this machine looks like from outside. Fails silently, for
+// the same reason: a question the operator did not ask should not become an error.
 func (m Model) lookUpPublicAddress() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -269,12 +260,8 @@ func (m Model) startWork(key string) Model {
 	return m
 }
 
-// saveProfile writes the server's files and, when that changed something a
-// running container is already using, recreates it so the change takes effect.
-//
-// Saving used to write .env and compose.yaml and stop. Editing a running server
-// rewrote both, reported "Saved", and left the container running the old
-// values, with nothing to say so. The settings appeared to change and did not.
+// saveProfile writes the server's files and recreates the container when that changed
+// something it is already using. Saving used to report "Saved" and leave the old values.
 func (m Model) saveProfile(profile config.Profile) tea.Cmd {
 	dir := m.store.ServerDir(profile.ID)
 	running := m.states[profile.ID] == gruntime.StateRunning
@@ -298,9 +285,8 @@ func (m Model) saveProfile(profile config.Profile) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		// up, not restart. A port or a volume change lands in compose.yaml, and
-		// `docker compose restart` restarts the container it already built
-		// rather than building the one the file now describes.
+		// up, not restart. A port or a volume change lands in compose.yaml, and `docker
+		// compose restart` restarts the container it already built.
 		if err := m.runtime.Start(ctx, profile, dir); err != nil {
 			return operationDone{err: fmt.Errorf("saved, but applying it failed: %w", err)}
 		}
@@ -322,18 +308,16 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		// Ask before doing rather than after failing. Available was declared on
-		// the Manager interface from the start and never called, so the
-		// operator met a raw compose error instead of "Docker is not running".
+		// Ask before doing rather than after failing. Available was on the Manager interface
+		// from the start and never called, so the operator met a raw compose error.
 		if err := m.runtime.Available(ctx); err != nil {
 			return operationDone{err: err, key: key}
 		}
 		var err error
 		switch action {
 		case "start":
-			// The SFU lives in its own project shared by every server here, so
-			// it has to exist and be running before a server that expects to
-			// reach it comes up.
+			// The SFU lives in its own project shared by every server here, so it has to
+			// be running before a server that expects to reach it comes up.
 			if _, err := m.store.WriteSharedCompose(); err != nil {
 				return operationDone{err: err, key: key}
 			}
@@ -353,9 +337,8 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 	}
 }
 
-// followLogs is loadLogs without the side effects of opening the view: it
-// refreshes what is already on screen and stays quiet when it cannot, so a
-// container that goes away mid-follow does not replace the logs with an error.
+// followLogs is loadLogs without the side effects of opening the view: it refreshes what is
+// on screen and stays quiet when it cannot, so a container going away is not an error.
 func (m Model) followLogs(profile config.Profile) tea.Cmd {
 	dir := m.store.ServerDir(profile.ID)
 	return func() tea.Msg {
@@ -556,10 +539,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.wizard.err = err.Error()
 						return m, nil
 					}
-					// Stays in the wizard while it writes. Leaving immediately
-					// meant the saving state had nowhere to appear, and a
-					// failed save dropped you on the dashboard with an error
-					// about a form you could no longer see.
+					// Stays in the wizard while it writes: leaving immediately
+					// left a failed save on the dashboard with no form to see.
 					m.busy, m.wizard.err = true, ""
 					return m, m.saveProfile(profile)
 				}
@@ -589,16 +570,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeDashboard
 		return m, nil
 	}
-	// Anything else falls through to the same key handling the table uses, so
-	// the detail view can act on the server it is showing. It used to swallow
-	// every key but esc, while its own footer listed s, x, r and l — naming
-	// keys that did nothing on the one screen dedicated to that server.
+	// Anything else falls through to the table's key handling, so the detail view can act on
+	// the server it shows. It used to swallow every key but esc while listing s, x, r and l.
 	if !isKey {
 		return m, nil
 	}
-	// No global lock. The work already runs in goroutines, so navigation,
-	// enter, logs and quit stay live while a server starts; only a second
-	// action on a row already working is refused, below.
+	// No global lock. The work runs in goroutines, so navigation, logs and quit stay live
+	// while a server starts; only a second action on a working row is refused.
 	profile, hasProfile := m.selectedProfile()
 	selected, hasSelected := m.selectedEntry()
 	can := actions{}
@@ -642,9 +620,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if hasSelected && selected.kind == entryShared {
-			// Consequential in a way a per-server stop is not: one of these
-			// serves every server on the machine, so say what it costs rather
-			// than reporting it like any other stop.
+			// Consequential in a way a per-server stop is not: one of these serves every
+			// server on the machine, so say what it costs.
 			return m.startWork(selected.key()), m.stopShared(selected.key(), selected.label)
 		}
 		if hasProfile {
@@ -721,10 +698,8 @@ func (m Model) joinAddresses(profile config.Profile) []string {
 	if profile.Host != "0.0.0.0" {
 		return []string{profile.Host + ":" + port}
 	}
-	// Bound to everything, so every address of this machine reaches it.
-	// Reachable addresses first and loopback last: the panel above this says
-	// "give people this address", and leading with 127.0.0.1 answers that with
-	// the one address nobody else can use.
+	// Bound to everything, so every address of this machine reaches it. Reachable addresses
+	// first and loopback last: leading with 127.0.0.1 answers with the useless one.
 	var lines []string
 	for _, address := range config.LocalAddresses() {
 		lines = append(lines, address.IP+":"+port+m.styles.muted.Render("   ("+address.Label+")"))
@@ -769,13 +744,8 @@ func (m Model) header(section string) string {
 	return m.styles.header.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
-// viewDashboard is a console table: every server and its live state on one
-// screen, the way k9s or docker ps present a fleet.
-//
-// It replaces a two-pane rail-and-panel where twelve identically-styled labels
-// sat inside borders running at 1.45:1 against their own background. Nothing
-// was primary, so nothing could be found. Here the row is the unit, the
-// columns are the facts, and weight separates the selected row from the rest.
+// viewDashboard is a console table: every server and its live state on one screen. The row
+// is the unit, the columns are the facts, and weight separates the selected row.
 func (m Model) viewDashboard() string {
 	noun := "servers"
 	if len(m.profiles) == 1 {
@@ -822,9 +792,8 @@ func (m Model) viewDashboard() string {
 		voiceW   = 8
 		uploadsW = 8
 	)
-	// Capped, not greedy. Giving the name every spare column pushed the facts
-	// to the far right of a wide terminal, so the eye had to travel the whole
-	// width to pair a server with its state.
+	// Capped, not greedy. Giving the name every spare column pushed the facts to the far
+	// right of a wide terminal, so the eye had to travel to pair a server with its state.
 	nameW := max(12, min(28, m.width-(statusW+addressW+voiceW+uploadsW)-8))
 
 	lines := []string{m.styles.column.Render("  " +
@@ -878,12 +847,8 @@ func (m Model) viewDashboard() string {
 	return head + "\n" + body + "\n" + footer
 }
 
-// viewDetail is one server, with the facts ranked.
-//
-// The panel it replaces rendered twelve fields as identical muted labels, so
-// the address you hand somebody had exactly the weight of the join policy and
-// the eye had nowhere to land. Here one fact is the page and the rest is a
-// single line under it.
+// viewDetail is one server, with the facts ranked: one fact is the page and the rest is a
+// single line under it. The panel it replaced gave twelve fields identical weight.
 func (m Model) viewDetail() string {
 	profile, ok := m.selectedProfile()
 	if !ok {
@@ -897,9 +862,8 @@ func (m Model) viewDetail() string {
 	}
 	footer := m.styles.footer.Width(m.width).Render(keys)
 
-	// Grouped by who each address is for. A flat list headed "give people this
-	// address" cannot say that one of them only works from this machine and
-	// another needs a port forwarded first.
+	// Grouped by who each address is for. A flat list cannot say that one of them only works
+	// from this machine and another needs a port forwarded first.
 	port := strconv.Itoa(profile.Port)
 	lines := []string{
 		"",
@@ -986,11 +950,8 @@ func (m Model) entryState(item entry) (glyph, word string, tone lipgloss.Style) 
 	return "○", "stopped", m.styles.muted
 }
 
-// dashboardKeys lists what the selected row can actually do.
-//
-// It used to list every key regardless, so start was offered on a running
-// server and stop on a stopped one — and pressing either reported success
-// without anything having happened.
+// dashboardKeys lists what the selected row can actually do. It used to list every key, so
+// start was offered on a running server and pressing it reported success.
 func (m Model) dashboardKeys() string {
 	parts := []string{"↑/↓ select"}
 
@@ -1026,11 +987,8 @@ func (m Model) dashboardKeys() string {
 	return strings.Join(parts, "   ")
 }
 
-// versionLine reports what this server runs, and what it could run.
-//
-// Read off the container rather than asked of the server: the image bakes
-// SERVER_VERSION in at build time, so this works on images built long before
-// the server had any way to report it.
+// versionLine reports what this server runs, and what it could run. Read off the container
+// rather than asked of the server, so it works on images built before that was possible.
 func (m Model) versionLine(profile config.Profile) string {
 	current := m.versions[profile.ID]
 	if current == "" {
@@ -1097,9 +1055,8 @@ func uploadsCell(backend string) string {
 	}
 }
 
-// pad fills a cell to width with spaces. The cells are built plain and styled
-// afterwards, because padding a string that already carries escape codes
-// measures the codes and the columns drift.
+// pad fills a cell to width with spaces. The cells are built plain and styled afterwards:
+// padding a string that already carries escape codes measures the codes.
 func pad(text string, width int) string {
 	for lipgloss.Width(text) < width {
 		text += " "
