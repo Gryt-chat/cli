@@ -190,11 +190,8 @@ func indexOf(t *testing.T, w wizard, key string) int {
 	return -1
 }
 
-// Regression: the dashboard decided whether enter saves with
-// `step == len(fields)-1`, which stopped meaning "the last visible step" as
-// soon as fields became conditional. A filesystem server could be walked to
-// step 8 of 8 and never saved, because the last field in the slice was the
-// sixth S3 one.
+// Regression: `step == len(fields)-1` stopped meaning "the last visible step" once fields
+// became conditional, so a filesystem server reached step 8 of 8 and could never be saved.
 func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
 	for _, backend := range []string{"filesystem", "s3"} {
 		w := newWizard(nil)
@@ -219,9 +216,8 @@ func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
 	}
 }
 
-// The test that would actually have caught it: the bug lived in the dashboard's
-// key handling, not in the wizard, so asserting on onLastStep alone proves
-// nothing about whether enter is wired to it.
+// The test that would actually have caught it: the bug lived in the dashboard's key
+// handling, so asserting on onLastStep alone proves nothing about what enter is wired to.
 func TestPressingEnterOnTheLastStepSavesAFilesystemServer(t *testing.T) {
 	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.1.0")
 	model.mode = modeWizard
@@ -288,9 +284,8 @@ func TestLeavingDefaultedFieldsAloneUsesTheDefaults(t *testing.T) {
 	}
 }
 
-// The bug: the field arrived holding "5000" with the cursor at the end, so
-// typing appended and you got 50005001. Typing now replaces because there is
-// nothing there to append to.
+// The bug: the field arrived holding "5000" with the cursor at the end, so typing appended
+// and you got 50005001. Typing now replaces, because there is nothing to append to.
 func TestTypingIntoADefaultedFieldReplacesRatherThanAppends(t *testing.T) {
 	w := newWizard(nil)
 	set(t, &w, "name", "My Server")
@@ -378,10 +373,8 @@ func TestStartingAServerBringsUpTheSharedStack(t *testing.T) {
 	}
 }
 
-// Focusing a field that has no text input panicked: a tick-list is built as a
-// bare struct, so its textinput is the zero value. The wizard died on the way
-// into the step rather than while drawing it, which is why rendering it in
-// isolation looked fine.
+// Focusing a field with no text input panicked: a tick-list is a bare struct, so its
+// textinput is the zero value. It died on the way in, which is why rendering looked fine.
 func TestFocusingEveryStepDoesNotPanic(t *testing.T) {
 	w := newWizard(nil)
 	set(t, &w, "storage", "s3")
@@ -555,9 +548,8 @@ func TestTheRecommendedChoiceIsTheOneAlreadySelected(t *testing.T) {
 	}
 }
 
-// Not every question has a right answer. Path-style addressing is right for
-// MinIO and wrong for AWS, so badging it would be wrong half the time and
-// would teach people to ignore the badge where it is right.
+// Not every question has a right answer. Path-style addressing is right for MinIO and wrong
+// for AWS, so badging it would teach people to ignore the badge where it is right.
 func TestQuestionsWithoutARightAnswerCarryNoRecommendation(t *testing.T) {
 	w := newWizard(nil)
 	if got := w.fields[indexOf(t, w, "s3path")].recommended; got != "" {
@@ -694,9 +686,8 @@ func TestReachableAddressesComeBeforeLoopback(t *testing.T) {
 	}
 }
 
-// The detail view swallowed every key but esc, while its own footer listed
-// s, x, r and l — naming keys that did nothing on the one screen dedicated to
-// that server.
+// The detail view swallowed every key but esc while its own footer listed s, x, r and l —
+// naming keys that did nothing on the one screen dedicated to that server.
 func TestTheDetailViewCanActOnItsServer(t *testing.T) {
 	store := config.NewStore(t.TempDir())
 	profile := config.NewProfile("Test")

@@ -55,19 +55,14 @@ type Profile struct {
 	// Signs this server's session tokens. Generated once and kept, because
 	// rotating it signs everybody out.
 	JWTSecret string `json:"jwtSecret,omitempty"`
-	// Authorises the CLI against this server's management API. Kept here
-	// rather than in the generated .env on purpose: .env is the file somebody
-	// pastes into a bug report or copies to another machine, and this is a
-	// credential for a running server. It reaches the container through the
-	// compose command's own environment instead.
+	// Authorises the CLI against this server's management API. Kept out of the generated
+	// .env: that is the file somebody pastes into a bug report, and this is a credential.
 	AdminToken string `json:"adminToken,omitempty"`
 	// The management API's port on this machine. Published to loopback only,
 	// and its own port because the server's main one is reachable by design.
 	AdminPort int `json:"adminPort,omitempty"`
-	// Filled in when the server uses this machine's shared object store, so
-	// the generated files can name its credentials. Deliberately not
-	// persisted: the shared secrets file owns them, and copying them into
-	// every profile would mean rotating them in several places.
+	// Filled in when the server uses this machine's shared object store. Deliberately not
+	// persisted: the shared secrets file owns them, and copies would need rotating twice.
 	SharedS3  *SharedSecrets    `json:"-"`
 	ExtraEnv  map[string]string `json:"extraEnv,omitempty"`
 	CreatedAt time.Time         `json:"createdAt"`
@@ -199,20 +194,12 @@ func (s *Store) List() ([]Profile, error) {
 		if jsonErr := json.Unmarshal(data, &profile); jsonErr != nil {
 			return nil, fmt.Errorf("decode %s: %w", path, jsonErr)
 		}
-		// Profiles written before the CLI generated a secret have none, and a
-		// server without one refuses to start. Filling it in here, on the read
-		// path, is what makes an existing profile work on the next start
-		// rather than requiring the operator to recreate it. Written back so
-		// the value is stable: generating a fresh one on every load would sign
-		// everybody out each time.
+		// Profiles written before the CLI generated a secret have none, and a server without
+		// one refuses to start. Written back so the value is stable across loads.
 		if profile.JWTSecret == "" {
 			profile.JWTSecret = NewSecret()
-			// Best effort. If the profile cannot be written back, for any
-			// reason including it being invalid in some unrelated way, the
-			// listing still succeeds and this server still gets a working
-			// secret for as long as the process lives. Failing the whole
-			// listing because one profile could not be migrated would take
-			// every other server down with it.
+			// Best effort. Failing the whole listing because one profile could not be
+			// migrated would take every other server down with it.
 			_ = s.Save(profile)
 		}
 		if profile.AdminToken == "" {
@@ -221,9 +208,8 @@ func (s *Store) List() ([]Profile, error) {
 		}
 		profiles = append(profiles, profile)
 	}
-	// A management port cannot be chosen while the profiles are still being
-	// read, because picking one needs to know what every other server already
-	// claims. Second pass, once they are all here.
+	// A management port cannot be chosen while the profiles are still being read, because
+	// picking one needs to know what every other server claims. Second pass.
 	for i := range profiles {
 		if profiles[i].AdminPort != 0 {
 			continue

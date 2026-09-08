@@ -1,10 +1,5 @@
-// Hallmark · pre-emit critique: P4 H5 E4 S5 R5 V4
-// Hallmark · macrostructure: Console Table · tone: technical/utilitarian
-// Hallmark · chrome: inherit-terminal · contrast: foreground-only, see note
-//
-// The previous stamp claimed P5 H5 E4 S5 R5 V5 and shipped a dashboard its own
-// author called hard to understand. These scores are deliberately lower and
-// were assigned after the redesign rather than before it.
+// Hallmark · pre-emit critique: P4 H5 E4 S5 R5 V4 · macrostructure: Console Table
+// tone: technical/utilitarian · chrome: inherit-terminal · contrast: foreground-only
 package app
 
 import (
@@ -13,17 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// The palette is foreground-only on purpose.
-//
-// The old theme painted #0B1018 across the whole viewport, which imposes a
-// dark slab on somebody running a light terminal and gets approximated into a
-// different palette entirely on a 256-colour one. A terminal program does not
-// own the background: the person running it does. Nothing here sets one, so
-// the tool sits in whatever theme is already there.
-//
-// Contrast is therefore not fixed at build time. These hues are chosen to
-// clear 4.5:1 against both a near-black and a near-white terminal, which is
-// what makes them safe to ship without knowing the background.
+// The palette is foreground-only on purpose: a terminal program does not own the background,
+// and these hues clear 4.5:1 against both a near-black and a near-white terminal.
 type theme struct {
 	text    colorToken
 	muted   colorToken

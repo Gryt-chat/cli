@@ -58,10 +58,10 @@ func main() {
 	}
 }
 
-// runDoctor prints every check and returns the exit code, so that a script can
-// gate on it.
-// runUpdate replaces this binary with the newest release, or with --check only
-// reports whether there is one.
+// runDoctor prints every check and returns the exit code, so a script can gate on it.
+
+// runUpdate replaces this binary with the newest release, or with --check only reports
+// whether there is one.
 func runUpdate(args []string) int {
 	checkOnly := len(args) > 0 && (args[0] == "--check" || args[0] == "check")
 

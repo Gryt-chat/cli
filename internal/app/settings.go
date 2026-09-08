@@ -13,14 +13,8 @@ import (
 	"github.com/Gryt-chat/cli/internal/management"
 )
 
-// The settings a server keeps in its own database, rather than in the
-// environment its container was started with.
-//
-// These could not be changed from here at all: they are authorised by
-// ownership, so managing a server meant being its owner in a client, even on a
-// machine you administer. They are reached through the server's management API
-// now, which is also what makes a change take effect — turning discovery off
-// has to withdraw the mDNS advertisement, and only the server can do that.
+// The settings a server keeps in its own database rather than in its container's
+// environment. Reached through the management API, which is what makes a change take effect.
 type settingsLoaded struct {
 	settings *management.Settings
 	err      error
@@ -84,9 +78,8 @@ func (m Model) loadSettings(profile config.Profile) tea.Cmd {
 	}
 }
 
-// applySetting sends one key. Only that key: a patch carrying everything this
-// side is holding would push a stale value back over anything changed
-// elsewhere since it was read.
+// applySetting sends one key, and only that key: a patch carrying everything this side holds
+// would push a stale value back over anything changed elsewhere since it was read.
 func (m Model) applySetting(profile config.Profile, key string, value any) tea.Cmd {
 	client := management.Client{Port: profile.AdminPort, Token: profile.AdminToken}
 	return func() tea.Msg {
