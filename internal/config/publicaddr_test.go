@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-// stubSTUN answers one binding request with an XOR-MAPPED-ADDRESS of the given
-// family, so the parser can be exercised without the internet and without
-// depending on which family a real server happens to answer over.
+// stubSTUN answers one binding request with an XOR-MAPPED-ADDRESS of the given family, so
+// the parser can be exercised without the internet.
 func stubSTUN(t *testing.T, family byte, ip net.IP) string {
 	t.Helper()
 	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
@@ -75,9 +74,8 @@ func TestStunReadsAnIPv4MappedAddress(t *testing.T) {
 	}
 }
 
-// The case that broke it against the real server: a dual-stack machine reaches
-// Google's STUN over IPv6 and is answered with family 0x02, which the first
-// version walked straight past.
+// The case that broke it against the real server: a dual-stack machine reaches Google's STUN
+// over IPv6 and is answered with family 0x02, which the first version walked past.
 func TestStunReadsAnIPv6MappedAddress(t *testing.T) {
 	server := stubSTUN(t, 0x02, net.ParseIP("2001:db8::1"))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

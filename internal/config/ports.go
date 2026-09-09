@@ -9,20 +9,11 @@ import (
 // use, so a machine with nothing in the way still gets the documented one.
 const DefaultPort = 5000
 
-// FreePort returns the first port at or above DefaultPort that nothing holds
-// and no existing server claims.
-//
-// A fixed default was wrong twice over. Every new server got 5000, so the
-// second one on a machine failed to bind. And on macOS 5000 is taken before
-// anything else starts: ControlCenter listens there for AirPlay Receiver, so
-// the server bound nothing the host could reach, the dashboard showed it as
-// unknown, and anybody given the address reached an AirPlay receiver instead.
-//
-// Probing rather than hardcoding a different number means this keeps working
-// when the next thing squats the next port.
-// AdminPortBase is where management ports are searched from. A different range
-// to the servers' own so the two are told apart at a glance in `docker ps` and
-// in a firewall rule.
+// FreePort returns the first port at or above DefaultPort that nothing holds and no existing
+// server claims. On macOS 5000 is ControlCenter's AirPlay receiver, so a fixed default lied.
+
+// AdminPortBase is where management ports are searched from — a different range to the
+// servers' own, so the two are told apart in `docker ps` and in a firewall rule.
 const AdminPortBase = 5090
 
 // FreeAdminPort returns a management port nothing holds and no other server
@@ -50,19 +41,8 @@ func freePortFrom(start int, taken []int) int {
 	return start
 }
 
-// portFree reports whether this machine will let a server bind the port.
-//
-// Bound on all interfaces on purpose: 0.0.0.0 is the default bind address, and
-// a port free on loopback but held on another interface would still fail. On
-// macOS that is exactly the AirPlay case.
-//
-// "tcp4", not "tcp", and the difference is not cosmetic. With "tcp" and an
-// address of 0.0.0.0, Go opens a dual-stack socket that binds happily while
-// something else already holds the IPv4 port — measured against a container
-// publishing 0.0.0.0:5001, where "tcp" succeeded and "tcp4" correctly reported
-// the address in use. Docker publishes on IPv4, so the probe has to ask about
-// IPv4 or it hands out ports that are already taken and the start fails with
-// "port is already allocated".
+// portFree reports whether this machine will let a server bind the port, on all interfaces.
+// "tcp4", not "tcp": a dual-stack socket binds happily while Docker holds the IPv4 port.
 func portFree(port int) bool {
 	listener, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
 	if err != nil {

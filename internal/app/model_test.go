@@ -11,9 +11,8 @@ import (
 func TestEmptyDashboardExplainsNextAction(t *testing.T) {
 	model := New(config.NewStore(t.TempDir()), &gruntime.Fake{}, "v0.1.0")
 	view := model.viewDashboard()
-	// Asserts the intent rather than the wording: an empty dashboard has to
-	// name the state and the next keypress. Pinning the exact sentence made
-	// this fail on a copy change that improved it.
+	// Asserts the intent rather than the wording: an empty dashboard has to name the state
+	// and the next keypress. Pinning the sentence failed on a copy change that improved it.
 	if !containsAll(view, "No servers", "Press n") {
 		t.Fatalf("empty dashboard lacks next action:\n%s", view)
 	}

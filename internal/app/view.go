@@ -7,14 +7,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// viewWizard is one question at a time, in the same language as the console
-// table: left-aligned, hierarchy carried by weight, nothing drawn.
-//
-// It used to render inside panelActive, which the dashboard redesign turned
-// into a no-op style. That left every step as unframed text floating after
-// eight blank lines, with no visual relationship between the counter, the
-// question, the help and the field. This does not restore the box; it gives
-// the step a structure that does not depend on one.
+// viewWizard is one question at a time, in the same language as the console table:
+// left-aligned, hierarchy carried by weight, nothing drawn. No box, and none needed.
 func (m Model) viewWizard() string {
 	field := m.wizard.fields[m.wizard.step]
 	step, total := m.wizard.progress()
@@ -41,9 +35,8 @@ func (m Model) viewWizard() string {
 	}
 	lines = append(lines, "", "  "+m.control(field))
 
-	// The four states a full-screen keyboard-driven step actually has.
-	// Saving is shown here, on the step that triggered it, rather than only as
-	// a notice on the dashboard after the wizard has already closed.
+	// The four states a full-screen keyboard-driven step actually has. Saving is shown here,
+	// on the step that triggered it, rather than as a notice after the wizard has closed.
 	switch {
 	case m.busy:
 		lines = append(lines, "", "  "+m.styles.accent.Render("Saving…"))
@@ -55,9 +48,8 @@ func (m Model) viewWizard() string {
 	return head + "\n" + body + "\n" + footer
 }
 
-// progressDots shows where you are without counting. Filled for done, hollow
-// for remaining; the total moves when an answer adds or removes steps, which
-// is honest about a wizard whose length depends on what you pick.
+// progressDots shows where you are without counting: filled for done, hollow for remaining.
+// The total moves when an answer adds or removes steps, which is honest.
 func (m Model) progressDots(step, total int) string {
 	if total > 20 {
 		return ""
@@ -143,10 +135,8 @@ func securityDescription(value string) string {
 	}
 }
 
-// Named for what each answer does rather than for how it is built. "Shared"
-// and "s3" and "filesystem" are the words the code uses; somebody standing up
-// a server for their friends is choosing between "it just works", "keep it
-// simple" and "I already pay for storage somewhere".
+// Named for what each answer does rather than how it is built. Somebody standing up a server
+// for their friends is choosing between "it just works" and "I already pay for storage".
 func storageDescription(value string) string {
 	switch value {
 	case "filesystem":

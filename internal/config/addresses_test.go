@@ -21,9 +21,8 @@ func TestVirtualInterfacesAreExcluded(t *testing.T) {
 	}
 }
 
-// The reason the filter exists: a Mac running Docker reported seven addresses,
-// five of them bridges to container networks. Advertising those hands every
-// client candidates that can never connect.
+// The reason the filter exists: a Mac running Docker reported seven addresses, five of them
+// bridges to container networks. Advertising those hands out candidates that never connect.
 func TestLocalAddressesSkipsLoopbackAndVirtual(t *testing.T) {
 	for _, address := range LocalAddresses() {
 		if strings.HasPrefix(address.IP, "127.") {

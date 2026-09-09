@@ -1,9 +1,5 @@
-// Package updater moves the CLI from one release to the next.
-//
-// It talks to the GitHub releases API and nothing else, only when asked. This
-// is an administrator's tool for machines the administrator owns, so knowing
-// it is out of date is part of the job rather than telemetry: no identifier is
-// sent, nothing is recorded, and a failed check is silent.
+// Package updater moves the CLI from one release to the next. It talks to the GitHub
+// releases API and nothing else, only when asked: no identifier, nothing recorded.
 package updater
 
 import (
@@ -29,9 +25,8 @@ import (
 // exercise the real decoding instead of a copy of it.
 var releasesURL = "https://api.github.com/repos/Gryt-chat/cli/releases/latest"
 
-// allReleasesURL includes prereleases, which /releases/latest excludes by
-// design. Following the beta channel means asking the list and taking the
-// newest, because the newest beta is exactly what /releases/latest hides.
+// allReleasesURL includes prereleases, which /releases/latest excludes by design. The newest
+// beta is exactly what /releases/latest hides.
 var allReleasesURL = "https://api.github.com/repos/Gryt-chat/cli/releases?per_page=10"
 
 type Release struct {
@@ -39,12 +34,13 @@ type Release struct {
 	Assets map[string]string // name -> download URL
 }
 
-// Check asks which release is newest. A caller that cannot reach the network
-// gets an error rather than a wrong answer.
+// Check asks which release is newest. A caller that cannot reach the network gets an error
+// rather than a wrong answer.
+
 // Check asks which release is newest on the stable channel.
-// LatestServerRelease reports the newest published Gryt server, so the CLI can
-// say whether the one running here is behind. Same request shape as its own
-// update check, against a different repository.
+
+// LatestServerRelease reports the newest published Gryt server, so the CLI can say whether
+// the one running here is behind. Same request shape, different repository.
 func LatestServerRelease(ctx context.Context, client *http.Client, beta bool) (string, error) {
 	url := "https://api.github.com/repos/Gryt-chat/server/releases/latest"
 	if beta {
@@ -179,9 +175,8 @@ func checkLatest(ctx context.Context, client *http.Client) (Release, error) {
 	return release, nil
 }
 
-// Newer reports whether want is a later version than have. Both may carry a
-// leading v. A build with no version compiled in, which is what `go run`
-// produces, is never considered out of date: there is nothing to compare.
+// Newer reports whether want is a later version than have; both may carry a leading v. A
+// build with no version compiled in, which `go run` produces, is never out of date.
 func Newer(have, want string) bool {
 	if have == "" || have == "dev" || want == "" {
 		return false
@@ -214,9 +209,8 @@ func parse(version string) ([3]int, string) {
 	return out, pre
 }
 
-// AssetFor picks this platform's archive out of a release. Matching on the
-// pieces rather than on a filename means a change to goreleaser's naming
-// template does not silently stop updates working.
+// AssetFor picks this platform's archive out of a release. Matching on the pieces rather
+// than a filename means a change to goreleaser's naming template does not stop updates.
 func (r Release) AssetFor(goos, goarch string) (name, url string, ok bool) {
 	for name, url := range r.Assets {
 		lower := strings.ToLower(name)
@@ -230,13 +224,8 @@ func (r Release) AssetFor(goos, goarch string) (name, url string, ok bool) {
 	return "", "", false
 }
 
-// Apply downloads this platform's build of the release and replaces the binary
-// at path with it.
-//
-// The download is verified against the release's checksums.txt before anything
-// is replaced, and the replacement is a rename within the same directory, so a
-// failure part way through leaves the existing binary untouched rather than
-// half-written.
+// Apply downloads this platform's build and replaces the binary at path. Verified against
+// checksums.txt first, and replaced by a rename, so a failure leaves the old one untouched.
 func Apply(ctx context.Context, client *http.Client, release Release, path string) error {
 	name, url, ok := release.AssetFor(runtime.GOOS, runtime.GOARCH)
 	if !ok {
@@ -335,9 +324,8 @@ func verify(ctx context.Context, client *http.Client, sumsURL, name string, arch
 	return fmt.Errorf("%s is not listed in checksums.txt", name)
 }
 
-// extract pulls the gryt binary out of a .tar.gz in memory. The archives are a
-// few megabytes, so there is no reason to touch the disk before the checksum
-// has been checked.
+// extract pulls the gryt binary out of a .tar.gz in memory. The archives are a few
+// megabytes, so there is no reason to touch the disk before the checksum has been checked.
 func extract(archive []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {

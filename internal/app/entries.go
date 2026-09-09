@@ -2,13 +2,8 @@ package app
 
 import "github.com/Gryt-chat/cli/internal/config"
 
-// An entry is a row in the table. Most are servers; the last two are the
-// pieces the machine runs one of and every server shares.
-//
-// Before this the model assumed every row was a config.Profile, which is why
-// the SFU and the object store appeared nowhere: the dashboard could say
-// "voice server is not running" and then offer nothing to do about it, and
-// there was no way at all to read the SFU's log.
+// An entry is a row in the table. Most are servers; the last two are the pieces the machine
+// runs one of and every server shares, which used to appear nowhere.
 type entryKind int
 
 const (
@@ -28,12 +23,8 @@ type entry struct {
 	role string
 }
 
-// entries lists the servers, then the shared pieces.
-//
-// Image workers are deliberately absent. One runs beside each server inside
-// that server's own compose project, so `docker compose logs` for the server
-// already carries its output; giving it a row would add a line to look at and
-// no information that is not already one keypress away.
+// entries lists the servers, then the shared pieces. Image workers are absent: one runs
+// inside each server's own compose project, so its output is already in that server's logs.
 func (m Model) entries() []entry {
 	list := make([]entry, 0, len(m.profiles)+2)
 	for _, profile := range m.profiles {
@@ -57,10 +48,8 @@ func (e entry) key() string {
 	return e.container
 }
 
-// actions are the things worth offering for a row in its current state.
-//
-// Start on a running server used to be accepted, run `compose up` again, and
-// report "Start X" as though something had happened. The state decides now.
+// actions are the things worth offering for a row in its current state. Start on a running
+// server used to be accepted and report success without anything happening.
 type actions struct{ start, stop, restart bool }
 
 func availableActions(running, unknown bool) actions {

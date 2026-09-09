@@ -1,14 +1,7 @@
 name: Release CLI
 
-# Dispatched by hand, same shape as the SFU release. Version comes from the
-# tags rather than a committed file, so nothing is pushed to main and this
-# works against a protected branch.
-#
-# goreleaser does the building and creates the GitHub release itself, so there
-# is no separate action-gh-release step here: the archives, the checksums and
-# the release notes all come out of `goreleaser release`. install.sh in the
-# superproject reads those assets, so the archive naming in .goreleaser.yml is
-# load-bearing — changing it breaks the one-line install.
+# Dispatched by hand, same shape as the SFU release: the version comes from the tags, so
+# nothing is pushed to main. install.sh reads the archive names in .goreleaser.yml.
 
 on:
   workflow_dispatch:
@@ -148,12 +141,8 @@ jobs:
             esac
           fi
 
-          # Until now the channel input was validated, written to an output and
-          # read by nothing. goreleaser decides prerelease from the tag alone,
-          # so dispatching with beta still shipped a stable release that
-          # /releases/latest returned and the installer picked up. Both
-          # install.sh and `gryt update` resolve /releases/latest, which
-          # excludes prereleases, so the distinction has to come from here.
+          # goreleaser decides prerelease from the tag alone, and both install.sh and
+          # `gryt update` resolve /releases/latest, which excludes prereleases.
           if [[ "$CHANNEL" == "beta" ]]; then
             BASE="${NEW_VERSION%%-*}"
             NEXT=1
