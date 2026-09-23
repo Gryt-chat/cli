@@ -203,7 +203,7 @@ func applyLocally(s *management.Settings, key, display string) *management.Setti
 func settingsErrorText(err error) string {
 	switch {
 	case errors.Is(err, management.ErrUnsupported):
-		return "This server has no management API. Update its image and restart it."
+		return "This server has no management API. Run gryt pull to move it onto a newer image."
 	case errors.Is(err, management.ErrUnreachable):
 		return "The server is not answering."
 	default:

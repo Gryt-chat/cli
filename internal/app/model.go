@@ -997,10 +997,10 @@ func (m Model) versionLine(profile config.Profile) string {
 	if m.serverLatest == "" || !updater.Newer(current, m.serverLatest) {
 		return m.styles.muted.Render(current) + m.styles.muted.Render("   up to date")
 	}
-	// The shape somebody reads at a glance: what you have, an arrow, what is
-	// waiting. The new one carries the colour, because it is the news.
+	// The shape somebody reads at a glance: what you have, an arrow, what is waiting, and
+	// the command that closes the gap. Restarting never pulled, and this used to say it did.
 	return m.styles.muted.Render(current) + " → " + m.styles.warning.Render(strings.TrimPrefix(m.serverLatest, "v")) +
-		m.styles.muted.Render("   restart to pull it")
+		m.styles.muted.Render("   gryt pull "+profile.ID)
 }
 
 // stateOf pairs every status with a glyph as well as a colour, so the fact

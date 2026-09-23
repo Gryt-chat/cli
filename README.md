@@ -76,10 +76,27 @@ and what it does about profanity. `c` changes those on a running server, through
 the local management API the server publishes on loopback.
 
 That needs server 1.5.0 or newer. Against anything older the screen says the
-server has no management API and tells you to update its image and restart it.
+server has no management API and points at `gryt pull`.
 
 Everything else lives in the generated `.env` and takes effect on restart. The
 settings screen and `gryt env` both label which is which.
+
+## Moving a server onto a newer image
+
+```sh
+gryt pull my-server
+```
+
+That pulls the image the release channel points at, recreates the server and
+its image worker, and prints the version it was on next to the version it's on
+now. It stops before doing anything when the server isn't running, or when the
+server already runs the newest release. `--force` pulls without checking.
+
+Restarting never pulled anything. `docker compose restart` reruns the container
+you already have, so the manager's version line names this command instead.
+
+The voice server and the object store are a compose project of their own,
+shared by every server on the machine. `gryt pull --shared` moves those.
 
 ## Development
 

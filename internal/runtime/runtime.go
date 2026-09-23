@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,6 +32,11 @@ type Manager interface {
 	// without it leaves the server unable to reach any media plane at all.
 	EnsureShared(context.Context, string) error
 	Start(context.Context, config.Profile, string) error
+	// Pull fetches newer images for one server's project without recreating anything, so
+	// a pull that dies partway leaves the container that is running alone.
+	Pull(context.Context, config.Profile, string, io.Writer) error
+	// PullShared does the same for the project holding the SFU and the object store.
+	PullShared(context.Context, string, io.Writer) error
 	Stop(context.Context, config.Profile, string) error
 	Restart(context.Context, config.Profile, string) error
 	Logs(context.Context, config.Profile, string, int) (string, error)
@@ -41,6 +47,12 @@ type Manager interface {
 	ContainerLogs(context.Context, string, int) (string, error)
 	// ContainerEnv reads one variable out of a running container.
 	ContainerEnv(context.Context, string, string) string
+	// ContainerImageID reports the image a container was created from, which is how a
+	// piece with no version to report says whether it moved.
+	ContainerImageID(context.Context, string) string
+	// ContainerImageRef reports the image name a container was created from, tag included,
+	// so a container left on another channel's tag can be told apart.
+	ContainerImageRef(context.Context, string) string
 	// StopShared takes the shared project down.
 	StopShared(context.Context, string) error
 }
@@ -135,6 +147,29 @@ func (Docker) Start(ctx context.Context, profile config.Profile, dir string) err
 	return composeCommandEnv(ctx, dir, adminEnv(profile), "up", "--detach", "--remove-orphans")
 }
 
+func (Docker) Pull(ctx context.Context, profile config.Profile, dir string, out io.Writer) error {
+	return composeStream(ctx, dir, adminEnv(profile), out, "pull")
+}
+
+func (Docker) PullShared(ctx context.Context, dir string, out io.Writer) error {
+	return composeStream(ctx, dir, nil, out, "pull")
+}
+
+// composeStream runs compose with its output going to the caller rather than into a buffer.
+// A pull moves hundreds of megabytes, and a silent terminal for minutes reads as a hang.
+func composeStream(ctx context.Context, dir string, env []string, out io.Writer, args ...string) error {
+	base := []string{"compose", "--project-directory", dir, "--file", dir + "/compose.yaml"}
+	cmd := exec.CommandContext(ctx, "docker", append(base, args...)...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose %s: %w", args[0], err)
+	}
+	return nil
+}
+
 // adminEnv carries the management token into the compose invocation. Empty when the profile
 // has none, in which case the server starts no management listener at all.
 func adminEnv(profile config.Profile) []string {
@@ -177,6 +212,22 @@ func (Docker) ContainerEnv(ctx context.Context, name, key string) string {
 		}
 	}
 	return ""
+}
+
+func (Docker) ContainerImageID(ctx context.Context, name string) string {
+	return inspect(ctx, name, "{{.Image}}")
+}
+
+func (Docker) ContainerImageRef(ctx context.Context, name string) string {
+	return inspect(ctx, name, "{{.Config.Image}}")
+}
+
+func inspect(ctx context.Context, name, format string) string {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", format, name).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func (Docker) ContainerLogs(ctx context.Context, name string, lines int) (string, error) {
