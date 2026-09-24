@@ -33,10 +33,14 @@ func (m Model) entries() []entry {
 	if len(m.profiles) == 0 {
 		return list
 	}
-	return append(list,
-		entry{kind: entryShared, label: "Voice (SFU)", container: config.SFUContainer, role: "carries voice for every server here"},
-		entry{kind: entryShared, label: "Object store", container: config.MinIOContainer, role: "holds uploads for every server here"},
-	)
+	list = append(list, entry{kind: entryShared, label: "Voice (SFU)", container: config.SFUContainer, role: "carries voice for every server here"})
+	// Only servers set up before the filesystem default still keep uploads in MinIO.
+	for _, profile := range m.profiles {
+		if profile.StorageBackend == config.SharedStorage {
+			return append(list, entry{kind: entryShared, label: "Object store", container: config.MinIOContainer, role: "holds uploads for the servers set up on it"})
+		}
+	}
+	return list
 }
 
 // key identifies a row for the purpose of "is this one working". A server is

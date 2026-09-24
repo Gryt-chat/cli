@@ -90,7 +90,7 @@ func runServer(ctx context.Context, out io.Writer, store *config.Store, manager 
 
 	// An image worker only exists when the server uses this machine's object store, and
 	// naming one that is not there reads as a pull that quietly skipped something.
-	fmt.Fprintf(out, "\nPulling the %s %s.\n", tag, what(profile))
+	fmt.Fprintf(out, "\nPulling the %s images for the server and its image worker.\n", tag)
 	if err := manager.Pull(ctx, profile, dir, out); err != nil {
 		fmt.Fprintf(out, "\nNothing was recreated. %s is still running %s.\n", profile.Name, describe(before))
 		fmt.Fprintf(out, "Run gryt pull %s again once the registry answers.\n", profile.ID)
@@ -164,14 +164,6 @@ func versions(name, tag, before, after string) string {
 	default:
 		return fmt.Sprintf("%s: %s → %s.", name, before, after)
 	}
-}
-
-// what names the images about to be pulled, which is one or two depending on the server.
-func what(profile config.Profile) string {
-	if profile.StorageBackend == config.SharedStorage {
-		return "images for the server and its image worker"
-	}
-	return "image for the server"
 }
 
 func describe(version string) string {

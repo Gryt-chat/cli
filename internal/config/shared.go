@@ -56,11 +56,11 @@ func (s *Store) WriteSharedCompose() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	secrets, err := s.Secrets()
+	path := filepath.Join(dir, "compose.yaml")
+	store, err := s.objectStoreServices()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "compose.yaml")
 	content := `# Managed by gryt. One of each, shared by every server on this machine.
 name: gryt-shared
 
@@ -91,7 +91,44 @@ services:
       retries: 3
       start_period: 40s
 
-  minio:
+` + store + `
+networks:
+  ` + SharedNetwork + `:
+    name: ` + SharedNetwork + `
+    driver: bridge
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// UsesSharedStore reports whether a server here still keeps uploads in the shared MinIO.
+// An unreadable profile counts as yes: dropping a store in use loses its uploads.
+func (s *Store) UsesSharedStore() bool {
+	profiles, err := s.List()
+	if err != nil {
+		return true
+	}
+	for _, profile := range profiles {
+		if profile.StorageBackend == SharedStorage {
+			return true
+		}
+	}
+	return false
+}
+
+// objectStoreServices is the MinIO half of the shared project, or nothing when no server
+// uses it. Its volume is left on disk either way.
+func (s *Store) objectStoreServices() (string, error) {
+	if !s.UsesSharedStore() {
+		return "", nil
+	}
+	secrets, err := s.Secrets()
+	if err != nil {
+		return "", err
+	}
+	return `  minio:
     image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     container_name: ` + MinIOContainer + `
     command: ["server", "/data", "--console-address", ":9001"]
@@ -134,14 +171,5 @@ services:
 
 volumes:
   minio-data:
-
-networks:
-  ` + SharedNetwork + `:
-    name: ` + SharedNetwork + `
-    driver: bridge
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
+`, nil
 }

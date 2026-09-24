@@ -82,11 +82,15 @@ func (p Profile) EnvSettings() []EnvSetting {
 			EnvSetting{Key: "S3_SECRET_ACCESS_KEY", Value: p.SharedS3.MinIOPassword, Sensitive: true, Mode: ModeRestart},
 			EnvSetting{Key: "S3_BUCKET", Value: p.SharedS3.Bucket, Mode: ModeRestart},
 			EnvSetting{Key: "S3_FORCE_PATH_STYLE", Value: "true", Mode: ModeRestart},
-			// The image worker runs beside this server rather than in the shared project:
-			// it reads the job queue out of this server's SQLite database.
-			EnvSetting{Key: "IMAGE_WORKER_URL", Value: "http://gryt-" + p.ID + "-image-worker:8080", Mode: ModeRestart},
 		)
 	}
+	// The folder under DATA_DIR that uploads go in. Without it every upload was a 500.
+	if _, set := p.ExtraEnv["S3_BUCKET"]; p.StorageBackend == "filesystem" && !set {
+		settings = append(settings, EnvSetting{Key: "S3_BUCKET", Value: FilesystemBucket, Mode: ModeRestart})
+	}
+	// The image worker runs beside this server rather than in the shared project:
+	// it reads the job queue out of this server's SQLite database.
+	settings = append(settings, EnvSetting{Key: "IMAGE_WORKER_URL", Value: "http://gryt-" + p.ID + "-image-worker:8080", Mode: ModeRestart})
 	keys := make([]string, 0, len(p.ExtraEnv))
 	for key := range p.ExtraEnv {
 		keys = append(keys, key)
@@ -114,6 +118,9 @@ func storageBackend(choice string) string {
 
 // SharedStorage is the wizard's name for using this machine's own object store.
 const SharedStorage = "shared"
+
+// FilesystemBucket names the uploads folder inside a filesystem server's data directory.
+const FilesystemBucket = "gryt"
 
 func isSensitiveKey(key string) bool {
 	upper := strings.ToUpper(key)
@@ -187,25 +194,16 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
 
 	// The image worker reads the job queue out of this server's SQLite database, so it
 	// mounts this server's data directory and there is one per server.
-	worker := ""
-	if profile.StorageBackend == SharedStorage {
-		secrets, err := s.Secrets()
-		if err != nil {
-			return "", err
-		}
-		worker = fmt.Sprintf(`
+	settings, err := s.Settings(profile)
+	if err != nil {
+		return "", err
+	}
+	worker := fmt.Sprintf(`
   image-worker:
     image: ghcr.io/gryt-chat/image-worker:`+s.Preferences().ImageTag()+`
     container_name: gryt-%s-image-worker
     environment:
-      DATA_DIR: /data
-      S3_ENDPOINT: %s
-      S3_REGION: auto
-      S3_ACCESS_KEY_ID: "%s"
-      S3_SECRET_ACCESS_KEY: "%s"
-      S3_BUCKET: "%s"
-      S3_FORCE_PATH_STYLE: "true"
-    volumes:
+%s    volumes:
       - ./data:/data
     depends_on:
       server:
@@ -213,8 +211,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
     networks:
       - %s
     restart: unless-stopped
-`, profile.ID, InternalS3Endpoint(), secrets.MinIOUser, secrets.MinIOPassword, secrets.Bucket, SharedNetwork)
-	}
+`, profile.ID, workerEnvironment(settings), SharedNetwork)
 
 	content := fmt.Sprintf(`services:
   server:
@@ -246,7 +243,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       retries: 3
 
 %s
-# Created by the shared project, which holds the SFU and the object store.
+# Created by the shared project, which holds the SFU.
 networks:
   `+SharedNetwork+`:
     external: true
@@ -255,4 +252,19 @@ networks:
 		return "", err
 	}
 	return path, nil
+}
+
+// workerEnvironment is the server's storage settings, so the worker reads and writes
+// wherever the server does whichever backend that is.
+func workerEnvironment(settings []EnvSetting) string {
+	var b strings.Builder
+	for _, setting := range settings {
+		if setting.Key != "DATA_DIR" && setting.Key != "STORAGE_BACKEND" && !strings.HasPrefix(setting.Key, "S3_") {
+			continue
+		}
+		// Doubled so compose does not read a $ in a secret as a variable.
+		value := strings.ReplaceAll(setting.Value, "$", "$$")
+		fmt.Fprintf(&b, "      %s: %s\n", setting.Key, strconv.Quote(value))
+	}
+	return b.String()
 }

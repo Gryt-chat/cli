@@ -33,149 +33,56 @@ func set(t *testing.T, w *wizard, key, value string) {
 	t.Fatalf("no field %q", key)
 }
 
-func TestStorageChoiceControlsHowManyStepsThereAre(t *testing.T) {
+// Uploads go in the server's own folder and there is nothing to choose, so the wizard
+// does not ask. Seven questions, eight with a typed address.
+func TestTheWizardAsksNothingAboutStorage(t *testing.T) {
 	w := newWizard(nil)
-	if _, total := w.progress(); total != 8 {
-		t.Fatalf("filesystem should ask 8 questions, got %d", total)
+	if _, total := w.progress(); total != 7 {
+		t.Fatalf("expected 7 questions, got %d", total)
+	}
+	for _, field := range w.fields {
+		if field.key == "storage" || strings.HasPrefix(field.key, "s3") {
+			t.Fatalf("the wizard still asks %q", field.key)
+		}
 	}
 
-	set(t, &w, "storage", "s3")
-	if _, total := w.progress(); total != 14 {
-		t.Fatalf("s3 should ask 14 questions, got %d", total)
-	}
-}
-
-func TestStorageIsTheLastStepUntilS3IsChosen(t *testing.T) {
-	w := newWizard(nil)
-	set(t, &w, "name", "My Server")
-	w.step = indexOf(t, w, "storage")
-
-	if !w.complete() {
-		t.Fatal("storage should be the final step for a filesystem server")
-	}
-
-	set(t, &w, "storage", "s3")
-	if w.complete() {
-		t.Fatal("storage must not be the final step once s3 is chosen")
-	}
-
-	w.step = indexOf(t, w, "s3path")
-	if !w.complete() {
-		t.Fatal("path-style should be the final step for an s3 server")
-	}
-}
-
-func TestS3AnswersReachTheEnvironment(t *testing.T) {
-	w := newWizard(nil)
-	set(t, &w, "name", "My Server")
-	set(t, &w, "storage", "s3")
-	set(t, &w, "s3endpoint", "http://minio:9000")
-	set(t, &w, "s3bucket", "uploads")
-	set(t, &w, "s3key", "minioadmin")
-	set(t, &w, "s3secret", "hunter2")
-
+	w.fields[indexOf(t, w, "name")].input.SetValue("My Server")
 	profile, err := w.profile()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	want := map[string]string{
-		"S3_ENDPOINT":          "http://minio:9000",
-		"S3_BUCKET":            "uploads",
-		"S3_REGION":            "auto",
-		"S3_ACCESS_KEY_ID":     "minioadmin",
-		"S3_SECRET_ACCESS_KEY": "hunter2",
-		"S3_FORCE_PATH_STYLE":  "true",
+	if profile.StorageBackend != "filesystem" {
+		t.Fatalf("a new server stores uploads with %q", profile.StorageBackend)
 	}
-	for key, value := range want {
-		if profile.ExtraEnv[key] != value {
-			t.Fatalf("%s = %q, want %q", key, profile.ExtraEnv[key], value)
+}
+
+// A server set up before the filesystem default keeps its store and its credentials when
+// edited, or saving the form would point it at an empty folder.
+func TestEditingAServerKeepsItsStorage(t *testing.T) {
+	for _, backend := range []string{config.SharedStorage, "s3"} {
+		existing := config.NewProfile("My Server")
+		existing.StorageBackend = backend
+		existing.ExtraEnv = map[string]string{
+			"S3_ENDPOINT":          "http://minio:9000",
+			"S3_BUCKET":            "uploads",
+			"S3_REGION":            "eu-central-1",
+			"S3_ACCESS_KEY_ID":     "minioadmin",
+			"S3_SECRET_ACCESS_KEY": "hunter2",
+			"S3_FORCE_PATH_STYLE":  "false",
 		}
-	}
 
-	// The whole point of the change: the generated .env has to carry the
-	// credentials, not just the backend name.
-	var sawSecret bool
-	for _, setting := range profile.EnvSettings() {
-		if setting.Key == "S3_SECRET_ACCESS_KEY" {
-			sawSecret = true
-			if !setting.Sensitive {
-				t.Fatal("the secret access key must be marked sensitive")
+		profile, err := wizardFromProfile(existing).profile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if profile.StorageBackend != backend {
+			t.Fatalf("%s became %q after a round trip", backend, profile.StorageBackend)
+		}
+		for key, value := range existing.ExtraEnv {
+			if profile.ExtraEnv[key] != value {
+				t.Fatalf("%s = %q after a round trip, want %q", key, profile.ExtraEnv[key], value)
 			}
 		}
-	}
-	if !sawSecret {
-		t.Fatal("S3_SECRET_ACCESS_KEY never reached EnvSettings")
-	}
-}
-
-func TestSwitchingAwayFromS3ClearsCredentialsButKeepsOtherKeys(t *testing.T) {
-	existing := config.NewProfile("My Server")
-	existing.StorageBackend = "s3"
-	existing.ExtraEnv = map[string]string{
-		"S3_ENDPOINT":          "http://minio:9000",
-		"S3_BUCKET":            "uploads",
-		"S3_ACCESS_KEY_ID":     "minioadmin",
-		"S3_SECRET_ACCESS_KEY": "hunter2",
-		"SOMETHING_ELSE":       "kept",
-	}
-
-	w := wizardFromProfile(existing)
-	set(t, &w, "storage", "filesystem")
-
-	profile, err := w.profile()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, key := range s3EnvKeys {
-		if _, present := profile.ExtraEnv[key]; present {
-			t.Fatalf("%s survived a switch to the filesystem backend", key)
-		}
-	}
-	if profile.ExtraEnv["SOMETHING_ELSE"] != "kept" {
-		t.Fatal("a key the wizard does not own was dropped")
-	}
-}
-
-func TestEditingAnS3ServerKeepsItsCredentials(t *testing.T) {
-	existing := config.NewProfile("My Server")
-	existing.StorageBackend = "s3"
-	existing.ExtraEnv = map[string]string{
-		"S3_ENDPOINT":          "http://minio:9000",
-		"S3_BUCKET":            "uploads",
-		"S3_REGION":            "eu-central-1",
-		"S3_ACCESS_KEY_ID":     "minioadmin",
-		"S3_SECRET_ACCESS_KEY": "hunter2",
-		"S3_FORCE_PATH_STYLE":  "false",
-	}
-
-	profile, err := wizardFromProfile(existing).profile()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, value := range existing.ExtraEnv {
-		if profile.ExtraEnv[key] != value {
-			t.Fatalf("%s = %q after a round trip, want %q", key, profile.ExtraEnv[key], value)
-		}
-	}
-}
-
-func TestS3StepsAreValidated(t *testing.T) {
-	w := newWizard(nil)
-	set(t, &w, "storage", "s3")
-
-	w.step = indexOf(t, w, "s3endpoint")
-	if err := w.validateStep(); err == nil {
-		t.Fatal("an empty endpoint should not validate")
-	}
-	set(t, &w, "s3endpoint", "minio:9000")
-	if err := w.validateStep(); err == nil {
-		t.Fatal("an endpoint without a scheme should not validate")
-	}
-	set(t, &w, "s3endpoint", "http://minio:9000")
-	if err := w.validateStep(); err != nil {
-		t.Fatalf("a valid endpoint was rejected: %v", err)
 	}
 }
 
@@ -192,27 +99,20 @@ func indexOf(t *testing.T, w wizard, key string) int {
 
 // Regression: `step == len(fields)-1` stopped meaning "the last visible step" once fields
 // became conditional, so a filesystem server reached step 8 of 8 and could never be saved.
-func TestEnterSavesOnTheLastVisibleStepForBothBackends(t *testing.T) {
-	for _, backend := range []string{"filesystem", "s3"} {
-		w := newWizard(nil)
-		set(t, &w, "name", "My Server")
-		set(t, &w, "storage", backend)
+func TestEnterSavesOnTheLastVisibleStep(t *testing.T) {
+	w := newWizard(nil)
+	set(t, &w, "name", "My Server")
 
-		last := w.visible()[len(w.visible())-1]
-		if w.fields[last].key == "storage" && backend == "s3" {
-			t.Fatal("storage cannot be the last step for an s3 server")
-		}
+	last := w.visible()[len(w.visible())-1]
+	w.step = last
+	if !w.onLastStep() {
+		t.Fatal("the last visible step is not recognised as last")
+	}
 
-		w.step = last
-		if !w.onLastStep() {
-			t.Fatalf("%s: the last visible step is not recognised as last", backend)
-		}
-
-		// And the step before it must not be, or enter would save early.
-		w.step = w.visible()[len(w.visible())-2]
-		if w.onLastStep() {
-			t.Fatalf("%s: the second-to-last step was treated as last", backend)
-		}
+	// And the step before it must not be, or enter would save early.
+	w.step = w.visible()[len(w.visible())-2]
+	if w.onLastStep() {
+		t.Fatal("the second-to-last step was treated as last")
 	}
 }
 
@@ -317,12 +217,6 @@ func TestFieldsWithoutADefaultAreStillRequired(t *testing.T) {
 	if err := w.validateStep(); err == nil {
 		t.Fatal("an empty server name should not validate")
 	}
-
-	set(t, &w, "storage", "s3")
-	w.step = indexOf(t, w, "s3endpoint")
-	if err := w.validateStep(); err == nil {
-		t.Fatal("an empty S3 endpoint should not validate")
-	}
 }
 
 // Editing is the other direction: there the current value is what you want to
@@ -377,7 +271,7 @@ func TestStartingAServerBringsUpTheSharedStack(t *testing.T) {
 // textinput is the zero value. It died on the way in, which is why rendering looked fine.
 func TestFocusingEveryStepDoesNotPanic(t *testing.T) {
 	w := newWizard(nil)
-	set(t, &w, "storage", "s3")
+	tickOption(t, &w, "I will type")
 	for _, step := range w.visible() {
 		w.step = step
 		w.focus()
@@ -545,15 +439,6 @@ func TestTheRecommendedChoiceIsTheOneAlreadySelected(t *testing.T) {
 			t.Fatalf("%q starts on %q but recommends %q",
 				field.key, field.choices[field.choice], field.recommended)
 		}
-	}
-}
-
-// Not every question has a right answer. Path-style addressing is right for MinIO and wrong
-// for AWS, so badging it would teach people to ignore the badge where it is right.
-func TestQuestionsWithoutARightAnswerCarryNoRecommendation(t *testing.T) {
-	w := newWizard(nil)
-	if got := w.fields[indexOf(t, w, "s3path")].recommended; got != "" {
-		t.Fatalf("path-style addressing recommends %q; it depends on the provider", got)
 	}
 }
 

@@ -95,6 +95,11 @@ func TestSharedDirSitsBesideTheServers(t *testing.T) {
 
 func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	store := NewStore(t.TempDir())
+	onStore := NewProfile("Old Server")
+	onStore.StorageBackend = SharedStorage
+	if err := store.Save(onStore); err != nil {
+		t.Fatal(err)
+	}
 	path, err := store.WriteSharedCompose()
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +107,7 @@ func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	body, _ := os.ReadFile(path)
 	yaml := string(body)
 
-	for _, want := range []string{"pgsty/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready"} {
+	for _, want := range []string{"pgsty/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready", "minio-data:"} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("shared compose is missing %q:\n%s", want, yaml)
 		}
@@ -116,6 +121,42 @@ func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	// does. Using the bare service name here failed to resolve.
 	if !strings.Contains(yaml, "mc alias set local "+InternalS3Endpoint()) {
 		t.Fatalf("minio-init does not address the store by container name:\n%s", yaml)
+	}
+}
+
+// New servers keep uploads in their own folder, so a machine with none on the shared
+// store runs no MinIO and never generates its password.
+func TestNoObjectStoreWhenNoServerUsesIt(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.Save(NewProfile("New Server")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.WriteSharedCompose()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	if strings.Contains(strings.ToLower(string(body)), "minio") {
+		t.Fatalf("a machine with only filesystem servers got an object store:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(store.SharedDir(), "secrets.json")); !os.IsNotExist(err) {
+		t.Fatal("the object store password was generated for a store that does not exist")
+	}
+}
+
+// A profile that cannot be read might be on the store. Dropping MinIO under it would
+// lose its uploads, so an unreadable profile keeps the store.
+func TestAnUnreadableProfileKeepsTheObjectStore(t *testing.T) {
+	store := NewStore(t.TempDir())
+	dir := store.ServerDir("broken")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "profile.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !store.UsesSharedStore() {
+		t.Fatal("an unreadable profile let the object store go")
 	}
 }
 
@@ -138,29 +179,75 @@ func TestSharedSecretsAreGeneratedOnceAndAreNotTheDefaults(t *testing.T) {
 	}
 }
 
-// A server on the shared store needs its own image worker, because the worker
-// reads the job queue out of that server's SQLite database.
-func TestSharedStorageAddsAPerServerImageWorker(t *testing.T) {
+// Every server needs its own image worker, because the worker reads the job queue out of
+// that server's SQLite database. GRYT-1443: a filesystem server used to get none.
+func TestEveryServerGetsAnImageWorkerOnItsOwnStorage(t *testing.T) {
 	store := NewStore(t.TempDir())
 	profile := NewProfile("Worker Test")
 
-	path, err := store.WriteCompose(profile)
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		backend string
+		env     map[string]string
+		want    []string
+	}{
+		{"shared", nil, []string{`S3_ENDPOINT: "` + InternalS3Endpoint() + `"`, `S3_BUCKET: "gryt"`, `STORAGE_BACKEND: "s3"`}},
+		{"filesystem", nil, []string{`STORAGE_BACKEND: "filesystem"`, `S3_BUCKET: "gryt"`, `DATA_DIR: "/data"`}},
+		{"s3", map[string]string{"S3_ENDPOINT": "https://r2.example", "S3_BUCKET": "b", "S3_SECRET_ACCESS_KEY": "a$b"},
+			[]string{`S3_ENDPOINT: "https://r2.example"`, `S3_BUCKET: "b"`, `S3_SECRET_ACCESS_KEY: "a$$b"`}},
+	} {
+		profile.StorageBackend = tc.backend
+		profile.ExtraEnv = tc.env
+		path, err := store.WriteCompose(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := os.ReadFile(path)
+		worker := string(body)
+		if i := strings.Index(worker, "  image-worker:"); i >= 0 {
+			worker = worker[i:]
+		} else {
+			t.Fatalf("%s: no image worker beside the server:\n%s", tc.backend, body)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(worker, want) {
+				t.Fatalf("%s: the worker is missing %s:\n%s", tc.backend, want, worker)
+			}
+		}
+		if strings.Contains(worker, "JWT_SECRET") {
+			t.Fatalf("%s: the worker was handed the server's signing key", tc.backend)
+		}
 	}
-	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "gryt-worker-test-image-worker") {
-		t.Fatalf("no image worker beside the server:\n%s", body)
+}
+
+// GRYT-1443: the server refuses every upload without a bucket, and in filesystem mode that
+// is only the folder name.
+func TestAFilesystemServerNamesItsUploadsFolder(t *testing.T) {
+	profile := NewProfile("Folder Test")
+	profile.StorageBackend = "filesystem"
+	seen := map[string]string{}
+	for _, setting := range profile.EnvSettings() {
+		seen[setting.Key] = setting.Value
+	}
+	if seen["S3_BUCKET"] != FilesystemBucket || seen["STORAGE_BACKEND"] != "filesystem" {
+		t.Fatalf("S3_BUCKET = %q, STORAGE_BACKEND = %q", seen["S3_BUCKET"], seen["STORAGE_BACKEND"])
+	}
+	if seen["IMAGE_WORKER_URL"] != "http://gryt-folder-test-image-worker:8080" {
+		t.Fatalf("IMAGE_WORKER_URL = %q", seen["IMAGE_WORKER_URL"])
 	}
 
-	profile.StorageBackend = "filesystem"
-	path, err = store.WriteCompose(profile)
-	if err != nil {
-		t.Fatal(err)
+	// A folder somebody set by hand stays, and is written once rather than twice.
+	profile.ExtraEnv = map[string]string{"S3_BUCKET": "uploads"}
+	count := 0
+	for _, setting := range profile.EnvSettings() {
+		if setting.Key == "S3_BUCKET" {
+			count++
+			if setting.Value != "uploads" {
+				t.Fatalf("S3_BUCKET = %q, want the hand-set uploads", setting.Value)
+			}
+		}
 	}
-	body, _ = os.ReadFile(path)
-	if strings.Contains(string(body), "image-worker") {
-		t.Fatal("a filesystem server should not get an image worker")
+	if count != 1 {
+		t.Fatalf("S3_BUCKET written %d times", count)
 	}
 }
 
@@ -168,7 +255,9 @@ func TestSharedStorageAddsAPerServerImageWorker(t *testing.T) {
 // had all of them, because the credentials were attached in one path and not the other.
 func TestSettingsResolvesTheSharedCredentials(t *testing.T) {
 	store := NewStore(t.TempDir())
-	settings, err := store.Settings(NewProfile("Env Test"))
+	profile := NewProfile("Env Test")
+	profile.StorageBackend = SharedStorage
+	settings, err := store.Settings(profile)
 	if err != nil {
 		t.Fatal(err)
 	}
