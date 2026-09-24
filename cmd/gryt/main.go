@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Gryt-chat/cli/internal/app"
+	"github.com/Gryt-chat/cli/internal/autoupdate"
 	"github.com/Gryt-chat/cli/internal/config"
 	"github.com/Gryt-chat/cli/internal/doctor"
 	"github.com/Gryt-chat/cli/internal/pull"
@@ -105,6 +108,18 @@ func runUpdate(args []string) int {
 // runPull moves one server onto the newest images. Named apart from gryt update, which
 // replaces this binary and leaves every container where it is.
 func runPull(store *config.Store, args []string) int {
+	// A different action entirely: checked first so "on"/"off" never get
+	// read as a server id.
+	for i, arg := range args {
+		if arg == "--auto" {
+			mode := ""
+			if i+1 < len(args) {
+				mode = args[i+1]
+			}
+			return runPullAuto(store, mode)
+		}
+	}
+
 	id := ""
 	force, shared := false, false
 	for _, arg := range args {
@@ -144,8 +159,58 @@ func runPull(store *config.Store, args []string) int {
 }
 
 func pullUsage() int {
-	fmt.Fprintln(os.Stderr, "usage: gryt pull <server-id> [--force]  |  gryt pull --shared")
+	fmt.Fprintln(os.Stderr, "usage: gryt pull <server-id> [--force]  |  gryt pull --shared  |  gryt pull --auto on|off|status")
 	return 1
+}
+
+// runPullAuto installs, removes, or reports on the nightly timer that keeps
+// this machine's servers current, the same one ops/deploy/auto-update gives Compose users.
+func runPullAuto(store *config.Store, mode string) int {
+	if runtime.GOOS != "linux" {
+		fmt.Fprintln(os.Stderr, "gryt: pull --auto needs systemd, so it only runs on Linux")
+		return 1
+	}
+	switch mode {
+	case "status":
+		out, _ := exec.Command("systemctl", "is-enabled", autoupdate.TimerUnit).CombinedOutput()
+		fmt.Printf("%s: %s", autoupdate.TimerUnit, out)
+		return 0
+	case "off":
+		fmt.Println("Removing the nightly update timer.")
+		return runShell("curl -fsSL " + autoupdate.InstallURL + " | sudo bash -s -- --uninstall")
+	case "on":
+		profiles, err := store.List()
+		if err != nil {
+			fatal(err)
+		}
+		containers := autoupdate.Containers(profiles)
+		fmt.Printf("Watching %d container(s): %s\n", len(containers), strings.Join(containers, ", "))
+		// Written before the installer runs: it never overwrites an existing
+		// env file, so re-running "on" after adding a server refreshes the list.
+		write := exec.Command("sudo", "tee", autoupdate.EnvFile)
+		write.Stdin = strings.NewReader(autoupdate.EnvFileContents(profiles))
+		if out, err := write.CombinedOutput(); err != nil {
+			fmt.Fprintln(os.Stderr, string(out))
+			fmt.Fprintln(os.Stderr, "gryt:", err)
+			return 1
+		}
+		return runShell("curl -fsSL " + autoupdate.InstallURL + " | sudo bash")
+	default:
+		fmt.Fprintln(os.Stderr, "usage: gryt pull --auto on|off|status")
+		return 1
+	}
+}
+
+// runShell runs a shell one-liner with stdout, stderr and stdin attached to
+// this process, so sudo can prompt and the installer's output reaches the terminal.
+func runShell(line string) int {
+	cmd := exec.Command("bash", "-c", line)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "gryt:", err)
+		return 1
+	}
+	return 0
 }
 
 // runChannel reads or sets the release channel this machine follows.
@@ -251,6 +316,8 @@ Usage:
   gryt pull <server> --force
                        Pull without checking whether a newer release exists
   gryt pull --shared   Pull the voice server and object store every server here shares
+  gryt pull --auto on  Check for new images every night instead of by hand
+  gryt pull --auto off Stop the nightly check
   gryt doctor          Check Docker and the config directory, and say what to fix
   gryt list            List configured local servers
   gryt env <server>    Show settings and whether they are live or restart-bound

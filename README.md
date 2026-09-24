@@ -100,6 +100,20 @@ the machine. `gryt pull --shared` moves it. Uploads live in each server's own
 data folder. Servers set up before that still keep theirs in a MinIO in the
 same shared project, and it stays for as long as one of them uses it.
 
+### Checking automatically instead of by hand
+
+```sh
+gryt pull --auto on
+```
+
+Installs the same nightly systemd timer Compose self-hosters use
+(`ops/deploy/auto-update` in the [gryt repo](https://github.com/Gryt-chat/gryt)),
+pointed at the shared voice server and every server this machine runs instead
+of `gryt-<stack>-<service>`. `gryt pull --auto off` removes it, and `gryt pull
+--auto status` says whether it's running. Re-run `on` after adding a server —
+it rewrites the container list each time. Linux with systemd only, and it asks
+for `sudo` to install the unit files.
+
 ## Development
 
 ```sh
