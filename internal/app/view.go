@@ -140,7 +140,7 @@ func securityDescription(value string) string {
 func storageDescription(value string) string {
 	switch value {
 	case "filesystem":
-		return "Straight into the server's own folder · no extra containers · no thumbnails"
+		return "Straight into the server's own folder · thumbnails and compression included"
 	case "s3":
 		return "A storage service you already have · you supply the address and keys"
 	default:
