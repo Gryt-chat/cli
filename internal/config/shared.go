@@ -92,7 +92,7 @@ services:
       start_period: 40s
 
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     container_name: ` + MinIOContainer + `
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -112,7 +112,7 @@ services:
 
   # Creates the bucket once. Exits, and compose leaves it exited.
   minio-init:
-    image: minio/mc:latest
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
     container_name: ` + MinIOContainer + `-init
     depends_on:
       minio:

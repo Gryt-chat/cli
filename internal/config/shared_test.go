@@ -102,7 +102,7 @@ func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	body, _ := os.ReadFile(path)
 	yaml := string(body)
 
-	for _, want := range []string{"minio/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready"} {
+	for _, want := range []string{"pgsty/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready"} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("shared compose is missing %q:\n%s", want, yaml)
 		}
