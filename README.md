@@ -95,8 +95,10 @@ server already runs the newest release. `--force` pulls without checking.
 Restarting never pulled anything. `docker compose restart` reruns the container
 you already have, so the manager's version line names this command instead.
 
-The voice server and the object store are a compose project of their own,
-shared by every server on the machine. `gryt pull --shared` moves those.
+The voice server is a compose project of its own, shared by every server on
+the machine. `gryt pull --shared` moves it. Uploads live in each server's own
+data folder. Servers set up before that still keep theirs in a MinIO in the
+same shared project, and it stays for as long as one of them uses it.
 
 ## Development
 

@@ -79,7 +79,7 @@ func NewProfile(name string) Profile {
 		Security:       SecurityBalanced,
 		DataDir:        "/data",
 		VoiceMaxUsers:  0,
-		StorageBackend: SharedStorage,
+		StorageBackend: "filesystem",
 		JWTSecret:      NewSecret(),
 		AdminToken:     NewSecret(),
 		ExtraEnv:       map[string]string{},

@@ -95,6 +95,11 @@ func TestSharedDirSitsBesideTheServers(t *testing.T) {
 
 func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	store := NewStore(t.TempDir())
+	onStore := NewProfile("Old Server")
+	onStore.StorageBackend = SharedStorage
+	if err := store.Save(onStore); err != nil {
+		t.Fatal(err)
+	}
 	path, err := store.WriteSharedCompose()
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +107,7 @@ func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	body, _ := os.ReadFile(path)
 	yaml := string(body)
 
-	for _, want := range []string{"pgsty/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready"} {
+	for _, want := range []string{"pgsty/minio", "container_name: " + MinIOContainer, "minio-init", "Bucket ready", "minio-data:"} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("shared compose is missing %q:\n%s", want, yaml)
 		}
@@ -116,6 +121,42 @@ func TestSharedStackCarriesTheObjectStoreButDoesNotPublishIt(t *testing.T) {
 	// does. Using the bare service name here failed to resolve.
 	if !strings.Contains(yaml, "mc alias set local "+InternalS3Endpoint()) {
 		t.Fatalf("minio-init does not address the store by container name:\n%s", yaml)
+	}
+}
+
+// New servers keep uploads in their own folder, so a machine with none on the shared
+// store runs no MinIO and never generates its password.
+func TestNoObjectStoreWhenNoServerUsesIt(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.Save(NewProfile("New Server")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.WriteSharedCompose()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	if strings.Contains(strings.ToLower(string(body)), "minio") {
+		t.Fatalf("a machine with only filesystem servers got an object store:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(store.SharedDir(), "secrets.json")); !os.IsNotExist(err) {
+		t.Fatal("the object store password was generated for a store that does not exist")
+	}
+}
+
+// A profile that cannot be read might be on the store. Dropping MinIO under it would
+// lose its uploads, so an unreadable profile keeps the store.
+func TestAnUnreadableProfileKeepsTheObjectStore(t *testing.T) {
+	store := NewStore(t.TempDir())
+	dir := store.ServerDir("broken")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "profile.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !store.UsesSharedStore() {
+		t.Fatal("an unreadable profile let the object store go")
 	}
 }
 
@@ -214,7 +255,9 @@ func TestAFilesystemServerNamesItsUploadsFolder(t *testing.T) {
 // had all of them, because the credentials were attached in one path and not the other.
 func TestSettingsResolvesTheSharedCredentials(t *testing.T) {
 	store := NewStore(t.TempDir())
-	settings, err := store.Settings(NewProfile("Env Test"))
+	profile := NewProfile("Env Test")
+	profile.StorageBackend = SharedStorage
+	settings, err := store.Settings(profile)
 	if err != nil {
 		t.Fatal(err)
 	}

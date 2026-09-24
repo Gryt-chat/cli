@@ -30,14 +30,25 @@ func TestSharedPiecesAppearAfterTheServers(t *testing.T) {
 	m, _ := modelWith(t, "Alpha", "Beta")
 	list := m.entries()
 
-	if len(list) != 4 {
-		t.Fatalf("expected two servers and two shared pieces, got %d", len(list))
+	if len(list) != 3 {
+		t.Fatalf("expected two servers and the SFU, got %d", len(list))
 	}
 	if list[0].kind != entryServer || list[1].kind != entryServer {
 		t.Fatal("servers should come first")
 	}
-	if list[2].container != config.SFUContainer || list[3].container != config.MinIOContainer {
-		t.Fatalf("shared pieces are %q and %q", list[2].container, list[3].container)
+	if list[2].container != config.SFUContainer {
+		t.Fatalf("the shared piece is %q", list[2].container)
+	}
+}
+
+// The object store only has a row while a server set up before the filesystem default
+// still keeps its uploads there.
+func TestTheObjectStoreRowFollowsTheServersOnIt(t *testing.T) {
+	m, _ := modelWith(t, "Alpha", "Beta")
+	m.profiles[1].StorageBackend = config.SharedStorage
+	list := m.entries()
+	if len(list) != 4 || list[3].container != config.MinIOContainer {
+		t.Fatalf("a server on the shared store should bring the object store row back, got %d rows", len(list))
 	}
 }
 
@@ -116,6 +127,7 @@ func TestSharedRowsReportTheirOwnState(t *testing.T) {
 	if word != "running" {
 		t.Fatalf("a running SFU reads as %q", word)
 	}
+	m.profiles[0].StorageBackend = config.SharedStorage
 	if _, word, _ := m.entryState(m.entries()[2]); word != "stopped" {
 		t.Fatalf("a stopped object store reads as %q", word)
 	}

@@ -99,8 +99,7 @@ func selectField(key, label, helper string, choices []string, current int) wizar
 	return wizardField{key: key, label: label, helper: helper, choices: choices, choice: current}
 }
 
-// recommend marks the choice to take with no reason to prefer another. Not on every
-// question: path-style addressing is right for MinIO and wrong for AWS.
+// recommend marks the choice to take with no reason to prefer another.
 func recommend(field wizardField, choice string) wizardField {
 	field.recommended = choice
 	return field
@@ -109,13 +108,6 @@ func recommend(field wizardField, choice string) wizardField {
 // onlyWhen makes a field conditional on an earlier answer.
 func onlyWhen(field wizardField, key, value string) wizardField {
 	field.whenKey, field.whenValue = key, value
-	return field
-}
-
-// masked hides what is typed, for the one field that is a secret rather than merely
-// sensitive: an access key ID identifies an account, a secret access key is the account.
-func masked(field wizardField) wizardField {
-	field.input.EchoMode = textinput.EchoPassword
 	return field
 }
 
@@ -159,16 +151,6 @@ func newWizard(taken []int) wizard {
 		inputField("proxy", "Trusted proxy hops", "Set to 1 for one reverse proxy or tunnel; otherwise leave 0.", "0", "0"),
 		reachField(),
 		onlyWhen(inputField("domain", "Its address", "Include the scheme. Behind a reverse proxy with TLS this is wss://, otherwise ws:// and the port.", "", "wss://voice.example.com"), "reach", domainChoice),
-		recommend(selectField("storage", "Where do uploads go?", "Images, files and avatars people send to this server.", []string{"shared", "filesystem", "s3"}, 0), "shared"),
-
-		// Only reachable when the backend is s3. Six questions about object storage for
-		// somebody on the filesystem would be six steps of nothing.
-		onlyWhen(inputField("s3endpoint", "S3 endpoint", "Full URL of the S3 API. MinIO on the same host looks like http://minio:9000.", "", "https://s3.eu-central-1.amazonaws.com"), "storage", "s3"),
-		onlyWhen(inputField("s3bucket", "Bucket", "Must already exist. Gryt does not create it.", "gryt", "gryt"), "storage", "s3"),
-		onlyWhen(inputField("s3region", "Region", "Leave as auto for MinIO and most S3-compatible services.", "auto", "auto"), "storage", "s3"),
-		onlyWhen(inputField("s3key", "Access key ID", "The key with read and write access to the bucket.", "", ""), "storage", "s3"),
-		onlyWhen(masked(inputField("s3secret", "Secret access key", "Stored in the generated .env, which is readable only by you.", "", "")), "storage", "s3"),
-		onlyWhen(selectField("s3path", "Path-style addressing", "MinIO and most self-hosted gateways need this on. AWS does not.", []string{"true", "false"}, 0), "storage", "s3"),
 	}}
 	w.focus()
 	return w
@@ -183,19 +165,6 @@ func wizardFromProfile(profile config.Profile) wizard {
 		"name": profile.Name, "host": profile.Host, "port": strconv.Itoa(profile.Port),
 		"voice": strconv.Itoa(profile.VoiceMaxUsers), "proxy": strconv.Itoa(profile.TrustedProxyHops),
 		"sfu": profile.SFUWebSocketURL,
-	}
-	// Only override a default when the profile carries a value, or editing a filesystem
-	// server would blank the region and bucket defaults on the way past.
-	for key, env := range map[string]string{
-		"s3endpoint": "S3_ENDPOINT",
-		"s3bucket":   "S3_BUCKET",
-		"s3region":   "S3_REGION",
-		"s3key":      "S3_ACCESS_KEY_ID",
-		"s3secret":   "S3_SECRET_ACCESS_KEY",
-	} {
-		if value := profile.ExtraEnv[env]; value != "" {
-			values[key] = value
-		}
 	}
 	chosen := map[string]bool{}
 	for _, endpoint := range strings.Split(profile.SFUWebSocketURL, ",") {
@@ -228,9 +197,7 @@ func wizardFromProfile(profile config.Profile) wizard {
 			}
 		}
 		for choice, value := range field.choices {
-			if (field.key == "security" && value == string(profile.Security)) ||
-				(field.key == "storage" && value == profile.StorageBackend) ||
-				(field.key == "s3path" && value == profile.ExtraEnv["S3_FORCE_PATH_STYLE"]) {
+			if field.key == "security" && value == string(profile.Security) {
 				field.choice = choice
 			}
 		}
@@ -291,17 +258,6 @@ func (w *wizard) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// s3EnvKeys are the variables the wizard owns when the backend is s3, listed once so
-// switching back to the filesystem clears exactly these and leaves hand-set ones alone.
-var s3EnvKeys = []string{
-	"S3_ENDPOINT",
-	"S3_BUCKET",
-	"S3_REGION",
-	"S3_ACCESS_KEY_ID",
-	"S3_SECRET_ACCESS_KEY",
-	"S3_FORCE_PATH_STYLE",
-}
-
 func (w wizard) shown(i int) bool {
 	field := w.fields[i]
 	if field.whenKey == "" {
@@ -337,7 +293,7 @@ func (w wizard) visible() []int {
 }
 
 // Position of the current step among the visible ones, and how many there are. The count
-// moves as the storage answer changes, which is the number of questions actually left.
+// moves as the reach answer changes, which is the number of questions actually left.
 func (w wizard) progress() (int, int) {
 	steps := w.visible()
 	for n, i := range steps {
@@ -408,29 +364,6 @@ func (w wizard) validateStep() error {
 		if err != nil || n < 0 || n > 16 {
 			return fmt.Errorf("proxy hops must be between 0 and 16")
 		}
-	case "s3endpoint":
-		if value == "" {
-			return fmt.Errorf("enter the S3 endpoint URL")
-		}
-		if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-			return fmt.Errorf("endpoint must start with http:// or https://")
-		}
-	case "s3bucket":
-		if value == "" {
-			return fmt.Errorf("enter the bucket name")
-		}
-	case "s3region":
-		if value == "" {
-			return fmt.Errorf("enter a region, or auto")
-		}
-	case "s3key":
-		if value == "" {
-			return fmt.Errorf("enter the access key ID")
-		}
-	case "s3secret":
-		if value == "" {
-			return fmt.Errorf("enter the secret access key")
-		}
 	case "reach":
 		if value == "" {
 			return fmt.Errorf("tick at least one way for people to connect")
@@ -453,26 +386,16 @@ func (w wizard) profile() (config.Profile, error) {
 	}
 	profile := config.NewProfile(values["name"])
 
-	// The S3 answers are environment variables rather than profile fields, so they travel in
-	// ExtraEnv. The six below are rewritten from the answers and cleared when not s3.
+	// Storage is not asked any more. A new server is on the filesystem, and one being
+	// edited keeps what it has, with any S3 settings still in its ExtraEnv.
 	extra := map[string]string{}
 	if w.original != nil {
 		profile.ID = w.original.ID
 		profile.CreatedAt = w.original.CreatedAt
+		profile.StorageBackend = w.original.StorageBackend
 		for key, value := range w.original.ExtraEnv {
 			extra[key] = value
 		}
-	}
-	for _, key := range s3EnvKeys {
-		delete(extra, key)
-	}
-	if values["storage"] == "s3" {
-		extra["S3_ENDPOINT"] = values["s3endpoint"]
-		extra["S3_BUCKET"] = values["s3bucket"]
-		extra["S3_REGION"] = values["s3region"]
-		extra["S3_ACCESS_KEY_ID"] = values["s3key"]
-		extra["S3_SECRET_ACCESS_KEY"] = values["s3secret"]
-		extra["S3_FORCE_PATH_STYLE"] = values["s3path"]
 	}
 	profile.ExtraEnv = extra
 	profile.Host = values["host"]
@@ -495,7 +418,6 @@ func (w wizard) profile() (config.Profile, error) {
 		endpoints = append(endpoints, endpoint)
 	}
 	profile.SFUWebSocketURL = strings.Join(endpoints, ",")
-	profile.StorageBackend = values["storage"]
 	if profile.AdminPort == 0 {
 		profile.AdminPort = w.adminPort
 	}

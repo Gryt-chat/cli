@@ -243,7 +243,7 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       retries: 3
 
 %s
-# Created by the shared project, which holds the SFU and the object store.
+# Created by the shared project, which holds the SFU.
 networks:
   `+SharedNetwork+`:
     external: true

@@ -95,8 +95,6 @@ func (m Model) control(field wizardField) string {
 		switch field.key {
 		case "security":
 			control += "\n\n  " + m.styles.muted.Render(securityDescription(field.choices[field.choice]))
-		case "storage":
-			control += "\n\n  " + m.styles.muted.Render(storageDescription(field.choices[field.choice]))
 		}
 		return control
 
@@ -132,19 +130,6 @@ func securityDescription(value string) string {
 		return "Accounts + local identities · discoverable · invite-only"
 	default:
 		return "Accounts only · discoverable · invite-only"
-	}
-}
-
-// Named for what each answer does rather than how it is built. Somebody standing up a server
-// for their friends is choosing between "it just works" and "I already pay for storage".
-func storageDescription(value string) string {
-	switch value {
-	case "filesystem":
-		return "Straight into the server's own folder · thumbnails and compression included"
-	case "s3":
-		return "A storage service you already have · you supply the address and keys"
-	default:
-		return "Handled for you on this machine · thumbnails and compression included"
 	}
 }
 
