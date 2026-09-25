@@ -59,3 +59,22 @@ func TestInvalidPort(t *testing.T) {
 		t.Fatal("expected invalid port")
 	}
 }
+
+func TestComposeHandsTheDataFolderToTheServerUser(t *testing.T) {
+	store := NewStore(t.TempDir())
+	profile := NewProfile("Owned")
+	if err := store.Save(profile); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.WriteCompose(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	compose := string(data)
+	for _, want := range []string{`entrypoint: ["chown", "-R", "1001:1001", "/data"]`, "condition: service_completed_successfully"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("compose.yaml lacks %q:\n%s", want, compose)
+		}
+	}
+}

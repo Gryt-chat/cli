@@ -213,6 +213,20 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
     restart: unless-stopped
 `, profile.ID, workerEnvironment(settings), SharedNetwork)
 
+	// On Linux the daemon creates ./data as root, and the server runs as uid 1001, so it
+	// could not open its database. Same fix as prod.yml's server-data-init.
+	dataInit := fmt.Sprintf(`
+  data-init:
+    image: ghcr.io/gryt-chat/server:%s
+    container_name: gryt-%s-data-init
+    user: "0:0"
+    entrypoint: ["chown", "-R", "1001:1001", "/data"]
+    volumes:
+      - ./data:/data
+    network_mode: none
+    restart: "no"
+`, s.Preferences().ImageTag(), profile.ID)
+
 	content := fmt.Sprintf(`services:
   server:
     image: ghcr.io/gryt-chat/server:%s
@@ -233,6 +247,9 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       GRYT_ADMIN_PORT: "%d"
     volumes:
       - ./data:/data
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     networks:
       - `+SharedNetwork+`
     restart: unless-stopped
@@ -242,12 +259,12 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       timeout: 10s
       retries: 3
 
-%s
+%s%s
 # Created by the shared project, which holds the SFU.
 networks:
   `+SharedNetwork+`:
     external: true
-`, s.Preferences().ImageTag(), profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, worker)
+`, s.Preferences().ImageTag(), profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, dataInit, worker)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}
