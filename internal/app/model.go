@@ -27,6 +27,7 @@ const (
 	modeLogs
 	modeDetail
 	modeSettings
+	modeRemove
 )
 
 type profilesLoaded struct {
@@ -129,6 +130,8 @@ type Model struct {
 	// True while a refresh is in flight, so ticks do not stack up behind a
 	// slow health check.
 	refreshing bool
+	// What has been typed on the remove screen, which has to be the server's id.
+	removeInput string
 }
 
 func New(store *config.Store, manager gruntime.Manager, version string) Model {
@@ -323,6 +326,11 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 			}
 			if err := m.runtime.EnsureShared(ctx, m.store.SharedDir()); err != nil {
 				return operationDone{err: fmt.Errorf("starting the shared SFU: %w", err), key: key}
+			}
+			// Rewritten so a server made by an older gryt picks up fixes to the file,
+			// such as the data folder's owner.
+			if _, err := m.store.WriteCompose(profile); err != nil {
+				return operationDone{err: err, key: key}
 			}
 			err = m.runtime.Start(ctx, profile, dir)
 		case "stop":
@@ -566,6 +574,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.settingsKey(key.String(), profile)
 	}
+	if m.mode == modeRemove {
+		if !isKey {
+			return m, nil
+		}
+		return m.removeKey(key)
+	}
 	if m.mode == modeDetail && isKey && (key.String() == "esc" || key.String() == "q") {
 		m.mode = modeDashboard
 		return m, nil
@@ -583,7 +597,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	busyHere := false
 	if hasSelected {
 		_, word, _ := m.entryState(selected)
-		can = availableActions(word == "running", word == "unknown")
+		can = availableActions(word == "running", word == "unknown" || word == "unhealthy")
 		busyHere = m.working[selected.key()]
 	}
 	switch key.String() {
@@ -644,6 +658,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.lookUpPublicAddress()
 		}
 		return m, nil
+	case "D":
+		if hasProfile && !busyHere {
+			m.mode, m.removeInput, m.notice, m.err = modeRemove, "", "", ""
+		}
+		return m, nil
 	case "c":
 		if hasProfile {
 			m.mode, m.settings, m.settingsErr, m.settingsErrKind = modeSettings, nil, "", nil
@@ -682,6 +701,8 @@ func (m Model) View() tea.View {
 		content = m.viewDetail()
 	case modeSettings:
 		content = m.viewSettings()
+	case modeRemove:
+		content = m.viewRemove()
 	default:
 		content = m.viewDashboard()
 	}
@@ -787,7 +808,7 @@ func (m Model) viewDashboard() string {
 	// Widths are fixed for the facts and flexible for the name, so the columns
 	// stay put as servers come and go rather than jumping about on each poll.
 	const (
-		statusW  = 10
+		statusW  = 12
 		addressW = 22
 		voiceW   = 8
 		uploadsW = 8
@@ -960,7 +981,7 @@ func (m Model) dashboardKeys() string {
 		if m.working[selected.key()] {
 			parts = append(parts, m.styles.accent.Render("working…"))
 		} else {
-			can := availableActions(word == "running", word == "unknown")
+			can := availableActions(word == "running", word == "unknown" || word == "unhealthy")
 			if selected.kind == entryServer {
 				parts = append(parts, "enter details")
 			}
@@ -975,7 +996,7 @@ func (m Model) dashboardKeys() string {
 			}
 			parts = append(parts, "l logs")
 			if selected.kind == entryServer {
-				parts = append(parts, "c settings", "e edit")
+				parts = append(parts, "c settings", "e edit", "D remove")
 			}
 		}
 	}
@@ -1011,6 +1032,8 @@ func (m Model) stateOf(profile config.Profile) (glyph, word string, tone lipglos
 		return "●", "running", m.styles.success
 	case gruntime.StateUnknown:
 		return "◆", "unknown", m.styles.warning
+	case gruntime.StateUnhealthy:
+		return "▲", "unhealthy", m.styles.danger
 	default:
 		return "○", "stopped", m.styles.muted
 	}

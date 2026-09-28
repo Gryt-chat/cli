@@ -44,6 +44,7 @@ Full documentation: [docs.gryt.chat/docs/cli](https://docs.gryt.chat/docs/cli).
 | `x` | Stop |
 | `r` | Restart |
 | `l` | Recent logs |
+| `D` | Remove the server, once you've typed its id |
 | `g` | Refresh health |
 | `u` | Update, when one is available |
 | `q` | Quit |
@@ -61,12 +62,18 @@ gryt/
     └── my-server/
         ├── profile.json
         ├── .env
+        ├── admin.env
         ├── compose.yaml
         └── data/
 ```
 
 Set `GRYT_CONFIG_DIR` to use another root. Profile directories and files are
 created with private permissions where the operating system supports them.
+
+`admin.env` holds the management token, apart from `.env` so that one stays safe
+to paste into a report. On Linux, `data/` belongs to uid 1001, the user the
+server runs as. A `data-init` container hands it over each time the server
+starts.
 
 ## Changing a running server
 
@@ -110,9 +117,21 @@ Installs the same nightly systemd timer Compose self-hosters use
 (`ops/deploy/auto-update` in the [gryt repo](https://github.com/Gryt-chat/gryt)),
 pointed at the shared voice server and every server this machine runs instead
 of `gryt-<stack>-<service>`. `gryt pull --auto off` removes it, and `gryt pull
---auto status` says whether it's running. Re-run `on` after adding a server —
-it rewrites the container list each time. Linux with systemd only, and it asks
-for `sudo` to install the unit files.
+--auto status` says whether it's running. Re-run `on` after adding a server,
+because it writes the container list each time. Linux with systemd only, and it
+asks for `sudo` to install the unit files.
+
+## Removing a server
+
+```sh
+gryt remove my-server
+```
+
+Says what goes, asks you to type the server's id, then takes its containers
+down and deletes its folder, database and uploads included. `--yes` skips the
+question. The last server on the machine takes the voice server, the `gryt`
+network and `shared/` with it. The images stay, and it prints the command that
+removes them.
 
 ## Development
 

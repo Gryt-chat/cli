@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/Gryt-chat/cli/internal/config"
 )
@@ -27,6 +30,28 @@ type Fake struct {
 	AfterShared map[string]string
 	// Image names by container name, tag included.
 	ImageRefs map[string]string
+	// Project directories passed to Remove and RemoveShared, and paths to DeleteAsRoot.
+	Removed       []string
+	SharedGone    bool
+	DeletedAsRoot []string
+}
+
+func (f *Fake) Remove(_ context.Context, dir string) error {
+	f.Removed = append(f.Removed, dir)
+	return f.Err
+}
+func (f *Fake) RemoveShared(_ context.Context, dir string) error {
+	f.SharedGone = true
+	f.Removed = append(f.Removed, dir)
+	return f.Err
+}
+func (f *Fake) DeleteAsRoot(_ context.Context, path, _ string) error {
+	f.DeletedAsRoot = append(f.DeletedAsRoot, path)
+	// Stands in for root: makes a folder the test locked writable again first.
+	_ = filepath.WalkDir(path, func(p string, _ fs.DirEntry, _ error) error {
+		return os.Chmod(p, 0o700)
+	})
+	return os.RemoveAll(path)
 }
 
 func (f *Fake) Available(context.Context) error { return f.Err }

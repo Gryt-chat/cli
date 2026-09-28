@@ -273,3 +273,20 @@ func TestSettingsResolvesTheSharedCredentials(t *testing.T) {
 		t.Fatal("the shared credentials were not attached")
 	}
 }
+
+// The update timer defers the SFU while it cannot read the peer count, which without
+// this setting was every night.
+func TestTheSFUServesMetricsForTheUpdateTimer(t *testing.T) {
+	store := NewStore(t.TempDir())
+	path, err := store.WriteSharedCompose()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `SFU_METRICS_PORT: "9091"`) {
+		t.Fatalf("the SFU has no metrics port:\n%s", data)
+	}
+	if strings.Contains(string(data), `"9091:`) {
+		t.Fatalf("the metrics port is published:\n%s", data)
+	}
+}
