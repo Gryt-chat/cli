@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"github.com/Gryt-chat/cli/internal/config"
 	"github.com/Gryt-chat/cli/internal/doctor"
 	"github.com/Gryt-chat/cli/internal/pull"
+	"github.com/Gryt-chat/cli/internal/remove"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
 	"github.com/Gryt-chat/cli/internal/updater"
 )
@@ -41,6 +44,8 @@ func main() {
 			os.Exit(runUpdate(args[1:]))
 		case "pull":
 			os.Exit(runPull(store, args[1:]))
+		case "remove", "rm":
+			os.Exit(runRemove(store, args[1:]))
 		case "channel":
 			os.Exit(runChannel(store, args[1:]))
 		case "doctor":
@@ -183,6 +188,13 @@ func runPullAuto(store *config.Store, mode string) int {
 		if err != nil {
 			fatal(err)
 		}
+		// The timer recreates servers from compose.yaml as it is on disk, so a server made
+		// by an older gryt gets the current file first, with its token file beside it.
+		for _, profile := range profiles {
+			if _, err := store.WriteCompose(profile); err != nil {
+				fatal(err)
+			}
+		}
 		containers := autoupdate.Containers(profiles)
 		fmt.Printf("Watching %d container(s): %s\n", len(containers), strings.Join(containers, ", "))
 		// Written before the installer runs: it never overwrites an existing
@@ -211,6 +223,62 @@ func runShell(line string) int {
 		return 1
 	}
 	return 0
+}
+
+// runRemove deletes one server, and the shared services with the last one.
+func runRemove(store *config.Store, args []string) int {
+	id, yes := "", false
+	for _, arg := range args {
+		switch {
+		case arg == "--yes" || arg == "-y":
+			yes = true
+		case strings.HasPrefix(arg, "-") || id != "":
+			return removeUsage()
+		default:
+			id = arg
+		}
+	}
+	if id == "" {
+		return removeUsage()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	stdin := bufio.NewReader(os.Stdin)
+	ask := func(prompt string) (string, error) {
+		fmt.Print(prompt)
+		return stdin.ReadString('\n')
+	}
+	result, err := remove.Run(ctx, os.Stdout, store, gruntime.Docker{}, ask, remove.Options{ServerID: id, Yes: yes})
+	if errors.Is(err, remove.ErrDeclined) {
+		fmt.Println("\nThat isn't the server's id, so nothing was removed.")
+		return 1
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gryt:", err)
+		return 1
+	}
+
+	// The timer's list lives in a root-owned file, so this says what to run
+	// rather than asking for sudo in the middle of a remove.
+	if listed, _ := os.ReadFile(autoupdate.EnvFile); strings.Contains(string(listed), "gryt-"+result.Profile.ID+" ") {
+		if result.Last {
+			fmt.Println("The nightly update timer is still installed. gryt pull --auto off removes it.")
+		} else {
+			fmt.Println("The nightly update timer still lists it. gryt pull --auto on refreshes the list.")
+		}
+	}
+	if result.Last {
+		tag := store.Preferences().ImageTag()
+		fmt.Println("The images are still here, in case you make another server. To free the space:")
+		fmt.Printf("  docker image rm ghcr.io/gryt-chat/server:%s ghcr.io/gryt-chat/image-worker:%s ghcr.io/gryt-chat/sfu:%s\n", tag, tag, tag)
+	}
+	return 0
+}
+
+func removeUsage() int {
+	fmt.Fprintln(os.Stderr, "usage: gryt remove <server-id> [--yes]")
+	return 1
 }
 
 // runChannel reads or sets the release channel this machine follows.
@@ -318,6 +386,11 @@ Usage:
   gryt pull --shared   Pull the voice server and object store every server here shares
   gryt pull --auto on  Check for new images every night instead of by hand
   gryt pull --auto off Stop the nightly check
+  gryt pull --auto status
+                       Say whether the nightly check is on
+  gryt remove <server> Delete a server, its containers and its data, after asking
+  gryt remove <server> --yes
+                       The same without asking, for scripts
   gryt doctor          Check Docker and the config directory, and say what to fix
   gryt list            List configured local servers
   gryt env <server>    Show settings and whether they are live or restart-bound

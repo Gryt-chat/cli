@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +23,8 @@ const (
 	StateRunning State = "running"
 	StateStopped State = "stopped"
 	StateUnknown State = "unknown"
+	// Answering, but saying it cannot do its job, such as a database it cannot write.
+	StateUnhealthy State = "unhealthy"
 )
 
 type Manager interface {
@@ -55,6 +57,13 @@ type Manager interface {
 	ContainerImageRef(context.Context, string) string
 	// StopShared takes the shared project down.
 	StopShared(context.Context, string) error
+	// Remove takes one server's project down for good, containers and all.
+	Remove(context.Context, string) error
+	// RemoveShared does the same for the shared project, its network and volume included.
+	RemoveShared(context.Context, string) error
+	// DeleteAsRoot removes a folder through a container. On Linux the server's files are
+	// owned by uid 1001, so the user running gryt usually cannot delete them itself.
+	DeleteAsRoot(ctx context.Context, path, image string) error
 }
 
 type Docker struct{}
@@ -88,21 +97,15 @@ func (Docker) Status(ctx context.Context, profile config.Profile) State {
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return StateRunning
 	}
+	if _, unhealthy := doctor.Unhealthy(res); unhealthy {
+		return StateUnhealthy
+	}
 	return StateUnknown
 }
 
 func composeCommand(ctx context.Context, dir string, args ...string) error {
-	return composeCommandEnv(ctx, dir, nil, args...)
-}
-
-// composeCommandEnv runs compose with extra environment of its own. The management token
-// reaches the container this way rather than through .env, which people paste into reports.
-func composeCommandEnv(ctx context.Context, dir string, env []string, args ...string) error {
 	base := []string{"compose", "--project-directory", dir, "--file", dir + "/compose.yaml"}
 	cmd := exec.CommandContext(ctx, "docker", append(base, args...)...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
 	var stderr bytes.Buffer
 	cmd.Stdout = &stderr
 	cmd.Stderr = &stderr
@@ -144,25 +147,22 @@ func (Docker) EnsureShared(ctx context.Context, dir string) error {
 }
 
 func (Docker) Start(ctx context.Context, profile config.Profile, dir string) error {
-	return composeCommandEnv(ctx, dir, adminEnv(profile), "up", "--detach", "--remove-orphans")
+	return composeCommand(ctx, dir, "up", "--detach", "--remove-orphans")
 }
 
-func (Docker) Pull(ctx context.Context, profile config.Profile, dir string, out io.Writer) error {
-	return composeStream(ctx, dir, adminEnv(profile), out, "pull")
+func (Docker) Pull(ctx context.Context, _ config.Profile, dir string, out io.Writer) error {
+	return composeStream(ctx, dir, out, "pull")
 }
 
 func (Docker) PullShared(ctx context.Context, dir string, out io.Writer) error {
-	return composeStream(ctx, dir, nil, out, "pull")
+	return composeStream(ctx, dir, out, "pull")
 }
 
 // composeStream runs compose with its output going to the caller rather than into a buffer.
 // A pull moves hundreds of megabytes, and a silent terminal for minutes reads as a hang.
-func composeStream(ctx context.Context, dir string, env []string, out io.Writer, args ...string) error {
+func composeStream(ctx context.Context, dir string, out io.Writer, args ...string) error {
 	base := []string{"compose", "--project-directory", dir, "--file", dir + "/compose.yaml"}
 	cmd := exec.CommandContext(ctx, "docker", append(base, args...)...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("docker compose %s: %w", args[0], err)
@@ -170,21 +170,12 @@ func composeStream(ctx context.Context, dir string, env []string, out io.Writer,
 	return nil
 }
 
-// adminEnv carries the management token into the compose invocation. Empty when the profile
-// has none, in which case the server starts no management listener at all.
-func adminEnv(profile config.Profile) []string {
-	if profile.AdminToken == "" {
-		return nil
-	}
-	return []string{"GRYT_ADMIN_TOKEN=" + profile.AdminToken}
-}
-
 func (Docker) Stop(ctx context.Context, _ config.Profile, dir string) error {
 	return composeCommand(ctx, dir, "down")
 }
 
-func (Docker) Restart(ctx context.Context, profile config.Profile, dir string) error {
-	return composeCommandEnv(ctx, dir, adminEnv(profile), "restart")
+func (Docker) Restart(ctx context.Context, _ config.Profile, dir string) error {
+	return composeCommand(ctx, dir, "restart")
 }
 
 func (Docker) ContainerRunning(ctx context.Context, name string) bool {
@@ -241,6 +232,24 @@ func (Docker) ContainerLogs(ctx context.Context, name string, lines int) (string
 
 func (Docker) StopShared(ctx context.Context, dir string) error {
 	return composeCommand(ctx, dir, "down")
+}
+
+func (Docker) Remove(ctx context.Context, dir string) error {
+	return composeCommand(ctx, dir, "down", "--remove-orphans")
+}
+
+func (Docker) RemoveShared(ctx context.Context, dir string) error {
+	return composeCommand(ctx, dir, "down", "--remove-orphans", "--volumes")
+}
+
+func (Docker) DeleteAsRoot(ctx context.Context, path, image string) error {
+	parent, name := filepath.Dir(path), filepath.Base(path)
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--user", "0:0", "--network", "none",
+		"--volume", parent+":/parent", "--entrypoint", "rm", image, "-rf", "/parent/"+name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("deleting %s through docker: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (Docker) Logs(ctx context.Context, _ config.Profile, dir string, lines int) (string, error) {

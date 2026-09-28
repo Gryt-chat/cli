@@ -1,9 +1,16 @@
 package runtime
 
 import (
+	"context"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Gryt-chat/cli/internal/config"
 )
 
 // Both of these are real output shapes seen while testing the shared stack.
@@ -53,4 +60,40 @@ func TestComposeReasonFallsBackToTheProcessError(t *testing.T) {
 	if got := composeReason("   \n\n", errors.New("exit status 127")); got != "exit status 127" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+func TestStatusTellsUnhealthyFromUnknown(t *testing.T) {
+	cases := map[string]struct {
+		code int
+		body string
+		want State
+	}{
+		"healthy":   {200, `{"status":"healthy"}`, StateRunning},
+		"unhealthy": {503, `{"status":"unhealthy","reason":"database","service":"signaling-server"}`, StateUnhealthy},
+		"not gryt":  {503, `busy`, StateUnknown},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(c.code)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer server.Close()
+			host, port, _ := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+			profile := config.NewProfile("Probe")
+			profile.Host, profile.Port = host, mustAtoi(t, port)
+			if got := (Docker{}).Status(context.Background(), profile); got != c.want {
+				t.Fatalf("got %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+func mustAtoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

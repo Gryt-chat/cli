@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Gryt-chat/cli/internal/config"
@@ -181,4 +182,43 @@ func splitHostPort(t *testing.T, rawURL string) (string, int) {
 		t.Fatal(err)
 	}
 	return host, port
+}
+
+// A Gryt server that cannot write its database answers 503 on its own port. That is the
+// server in trouble, not another program holding the port.
+func TestAnUnhealthyServerIsNotReportedAsASquatter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"unhealthy","reason":"database","detail":"init failed","service":"signaling-server"}`))
+	}))
+	defer server.Close()
+
+	host, port := splitHostPort(t, server.URL)
+	profile := config.NewProfile("Broken")
+	profile.Host, profile.Port = host, port
+
+	check := find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{profile}), "Server health")
+	if check.OK || check.Fix == "" {
+		t.Fatalf("an unhealthy server should fail with a fix, got %#v", check)
+	}
+	if want := "database init failed"; !strings.Contains(check.Detail, want) {
+		t.Fatalf("detail %q does not say %q", check.Detail, want)
+	}
+}
+
+// Anything else answering 503 is still something holding the port.
+func TestAPlain503IsStillASquatter(t *testing.T) {
+	squatter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer squatter.Close()
+
+	host, port := splitHostPort(t, squatter.URL)
+	profile := config.NewProfile("Squatted")
+	profile.Host, profile.Port = host, port
+
+	if find(Environment(context.Background(), ok, t.TempDir(), []config.Profile{profile}), "Port owners").OK {
+		t.Fatal("a bare 503 should be reported as held by something else")
+	}
 }

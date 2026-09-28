@@ -213,12 +213,34 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
     restart: unless-stopped
 `, profile.ID, workerEnvironment(settings), SharedNetwork)
 
+	// On Linux the daemon creates ./data as root and the server runs as uid 1001, so it
+	// could not open its database. Same fix as prod.yml's server-data-init.
+	dataInit := fmt.Sprintf(`
+  data-init:
+    image: ghcr.io/gryt-chat/server:%s
+    container_name: gryt-%s-data-init
+    user: "0:0"
+    entrypoint: ["sh", "-c", %s]
+    volumes:
+      - ./data:/data
+    network_mode: none
+    restart: "no"
+`, s.Preferences().ImageTag(), profile.ID, strconv.Quote(dataInitScript))
+
+	if err := s.writeAdminEnv(profile); err != nil {
+		return "", err
+	}
+
 	content := fmt.Sprintf(`services:
   server:
     image: ghcr.io/gryt-chat/server:%s
     container_name: gryt-%s
     env_file:
       - .env
+      # The management token, in a file of its own so .env stays safe to paste
+      # into a report. A file rather than the CLI's environment, so the nightly
+      # update timer recreates the server with it too.
+      - `+AdminEnvFile+`
     ports:
       - "%s:%d:%d"
       # Management, on loopback only. The port above is bound to whatever the
@@ -226,13 +248,12 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       # enforces that at the host, before anything reaches the container.
       - "127.0.0.1:%d:%d"
     environment:
-      # Substituted from the environment the CLI runs docker compose with, so
-      # the token never lands in .env — the file somebody pastes into a bug
-      # report or copies to another machine.
-      GRYT_ADMIN_TOKEN: ${GRYT_ADMIN_TOKEN:-}
       GRYT_ADMIN_PORT: "%d"
     volumes:
       - ./data:/data
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     networks:
       - `+SharedNetwork+`
     restart: unless-stopped
@@ -242,16 +263,38 @@ func (s *Store) WriteCompose(profile Profile) (string, error) {
       timeout: 10s
       retries: 3
 
-%s
+%s%s
 # Created by the shared project, which holds the SFU.
 networks:
   `+SharedNetwork+`:
     external: true
-`, s.Preferences().ImageTag(), profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, worker)
+`, s.Preferences().ImageTag(), profile.ID, profile.Host, profile.Port, profile.Port, profile.AdminPort, profile.AdminPort, profile.AdminPort, profile.Port, dataInit, worker)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// dataInitScript never fails the start: Docker Desktop's bind mounts may refuse a chown,
+// and the folder is writable there anyway. On Linux a failure still shows in the log.
+const dataInitScript = "chown -R 1001:1001 /data || echo 'gryt: could not hand /data to uid 1001' >&2"
+
+// AdminEnvFile holds the management token beside .env, readable only by this user.
+const AdminEnvFile = "admin.env"
+
+// writeAdminEnv writes the token file compose.yaml names. Empty when the profile has no
+// token, in which case the server starts no management listener.
+func (s *Store) writeAdminEnv(profile Profile) error {
+	content := "# Managed by gryt. The management API token, kept out of .env on purpose.\n"
+	if profile.AdminToken != "" {
+		content += "GRYT_ADMIN_TOKEN=" + quoteEnv(profile.AdminToken) + "\n"
+	}
+	path := filepath.Join(s.ServerDir(profile.ID), AdminEnvFile)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return err
+	}
+	// WriteFile keeps the mode of a file that already exists.
+	return os.Chmod(path, 0o600)
 }
 
 // workerEnvironment is the server's storage settings, so the worker reads and writes

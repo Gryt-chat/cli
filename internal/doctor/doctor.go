@@ -4,6 +4,8 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -153,7 +155,15 @@ func squattedPorts(ctx context.Context, profiles []config.Profile) *Check {
 			// looks exactly like this and is not a problem.
 			continue
 		}
+		reason, unhealthy := Unhealthy(res)
 		_ = res.Body.Close()
+		if unhealthy {
+			return &Check{
+				Name:   "Server health",
+				Detail: profile.Name + " is running, but says its " + reason,
+				Fix:    "Stop it with x and start it with s, which hands its data folder back to it. l shows why.",
+			}
+		}
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			return portTaken(profile, "something there answered "+res.Status)
 		}
@@ -162,6 +172,29 @@ func squattedPorts(ctx context.Context, profiles []config.Profile) *Check {
 		return nil
 	}
 	return &Check{Name: "Port owners", OK: true, Detail: "no server's port is held by anything else"}
+}
+
+// Unhealthy reads a Gryt server's own 503 off /health, so a server that cannot write its
+// database is not mistaken for another program holding its port.
+func Unhealthy(res *http.Response) (string, bool) {
+	if res.StatusCode != http.StatusServiceUnavailable {
+		return "", false
+	}
+	var body struct{ Status, Service, Reason, Detail string }
+	if json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&body) != nil {
+		return "", false
+	}
+	if body.Service != "signaling-server" || body.Status != "unhealthy" {
+		return "", false
+	}
+	reason := body.Reason
+	if reason == "" {
+		reason = "health check failed"
+	}
+	if body.Detail != "" {
+		reason += " " + body.Detail
+	}
+	return reason, true
 }
 
 func portTaken(profile config.Profile, why string) *Check {

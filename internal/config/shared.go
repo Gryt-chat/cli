@@ -81,6 +81,9 @@ services:
       # it. Derived from the interfaces at write time rather than asked about,
       # because it describes the machine and not any one server.
       ICE_ADVERTISE_IP: "` + AdvertiseIPs() + `"
+      # Not published. The nightly update timer reads the peer count here and
+      # waits for an empty call; without it the SFU was never updated.
+      SFU_METRICS_PORT: "9091"
     networks:
       - ` + SharedNetwork + `
     restart: unless-stopped
