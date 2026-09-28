@@ -52,6 +52,39 @@ Full documentation: [docs.gryt.chat/docs/cli](https://docs.gryt.chat/docs/cli).
 The wizard uses `Enter` to advance/save, `Shift+Tab` to move back, arrow keys to
 change a choice, and `Esc` to cancel.
 
+## Creating and starting a server from a script
+
+```sh
+gryt create --name my-server --port 5000 --yes
+gryt start my-server
+```
+
+`gryt create` takes every flag the wizard asks for, and previews what it would
+create without writing anything until `--yes` is added:
+
+| Flag | Same as | Default |
+| --- | --- | --- |
+| `--name` | Server name | required |
+| `--host` | Bind address | `0.0.0.0` |
+| `--port` | Port | the first port nothing else on the machine holds |
+| `--security` | Security level (`strict`, `balanced` or `community`) | `balanced` |
+| `--voice-seats` | Voice seats | `0` (no limit) |
+| `--proxy-hops` | Trusted proxy hops | `0` |
+| `--domain` | The typed address in "Where will people connect from?" | none |
+| `--lan` | Ticking this machine's own addresses in the same question | off |
+
+`--domain` takes a `ws://` or `wss://` address, and can be repeated or given as
+a comma-separated list. Without `--domain` or `--lan`, the server is only
+reachable at `ws://localhost:5005` — the same as leaving every box but "This
+machine only" unticked in the wizard.
+
+`gryt start <server>` brings up the shared voice server, then the named one.
+It's the same two steps behind the manager's `s` key, and it exits non-zero if
+Docker isn't available or the server was never created.
+
+Both exit `0` on success and non-zero otherwise, so a script can chain them
+with `gryt pull` and `gryt remove` without driving a terminal.
+
 ## Files
 
 By default, profiles live below the platform user config directory:

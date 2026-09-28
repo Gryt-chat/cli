@@ -16,10 +16,12 @@ import (
 	"github.com/Gryt-chat/cli/internal/app"
 	"github.com/Gryt-chat/cli/internal/autoupdate"
 	"github.com/Gryt-chat/cli/internal/config"
+	"github.com/Gryt-chat/cli/internal/create"
 	"github.com/Gryt-chat/cli/internal/doctor"
 	"github.com/Gryt-chat/cli/internal/pull"
 	"github.com/Gryt-chat/cli/internal/remove"
 	gruntime "github.com/Gryt-chat/cli/internal/runtime"
+	"github.com/Gryt-chat/cli/internal/start"
 	"github.com/Gryt-chat/cli/internal/updater"
 )
 
@@ -42,6 +44,10 @@ func main() {
 			return
 		case "update":
 			os.Exit(runUpdate(args[1:]))
+		case "create":
+			os.Exit(runCreate(store, args[1:]))
+		case "start":
+			os.Exit(runStart(store, args[1:]))
 		case "pull":
 			os.Exit(runPull(store, args[1:]))
 		case "remove", "rm":
@@ -107,6 +113,100 @@ func runUpdate(args []string) int {
 		return 1
 	}
 	fmt.Printf("Updated to %s\n", release.Tag)
+	return 0
+}
+
+// runCreate builds a server's profile and generated files from flags, the same thing the
+// wizard saves, so a script can set one up without a terminal.
+func runCreate(store *config.Store, args []string) int {
+	opts := create.Options{Host: "0.0.0.0"}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value := func() string {
+			i++
+			if i < len(args) {
+				return args[i]
+			}
+			return ""
+		}
+		switch arg {
+		case "--help", "-h":
+			createUsage()
+			return 0
+		case "--yes", "-y":
+			opts.Yes = true
+		case "--name":
+			opts.Name = value()
+		case "--host":
+			opts.Host = value()
+		case "--port":
+			opts.Port = atoiOrUsage(value())
+		case "--security":
+			opts.Security = value()
+		case "--voice-seats":
+			opts.VoiceSeats = atoiOrUsage(value())
+		case "--proxy-hops":
+			opts.ProxyHops = atoiOrUsage(value())
+		case "--domain":
+			opts.Domains = append(opts.Domains, strings.Split(value(), ",")...)
+		case "--lan":
+			opts.LAN = true
+		default:
+			return createUsage()
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := create.Run(ctx, os.Stdout, store, opts)
+	if errors.Is(err, create.ErrPreview) {
+		return 1
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gryt:", err)
+		return 1
+	}
+	return 0
+}
+
+// atoiOrUsage is a bare-bones strconv.Atoi for flag values: a script's malformed input is a
+// usage error, not a panic or a silently-ignored zero.
+func atoiOrUsage(value string) int {
+	n := 0
+	if _, err := fmt.Sscanf(value, "%d", &n); err != nil {
+		fatal(fmt.Errorf("%q is not a number", value))
+	}
+	return n
+}
+
+func createUsage() int {
+	fmt.Fprintln(os.Stderr, strings.TrimSpace(`
+usage: gryt create --name <name> [flags] --yes
+  --host <address>       Bind address (default 0.0.0.0)
+  --port <n>             Port exposed by Docker (default: the first free one)
+  --security <level>     strict, balanced (default) or community
+  --voice-seats <n>      0 means no limit (default)
+  --proxy-hops <n>       Trusted reverse-proxy hops (default 0)
+  --domain <ws(s)://...> An address people connect through, beyond this machine's own; repeatable
+  --lan                  Also advertise this machine's LAN addresses
+  --yes                  Write it. Without this flag, create only previews what it would do
+`))
+	return 1
+}
+
+// runStart brings a server's containers up without the manager, so a script that created a
+// server with gryt create can bring it up the same way.
+func runStart(store *config.Store, args []string) int {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		fmt.Fprintln(os.Stderr, "usage: gryt start <server-id>")
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if _, err := start.Run(ctx, os.Stdout, store, gruntime.Docker{}, start.Options{ServerID: args[0]}); err != nil {
+		fmt.Fprintln(os.Stderr, "gryt:", err)
+		return 1
+	}
 	return 0
 }
 
@@ -380,6 +480,9 @@ Usage:
   gryt channel beta    Follow beta for this CLI and the servers it starts
   gryt update          Replace this binary with the newest release
   gryt update --check  Report whether a newer release exists, and change nothing
+  gryt create --name <name> [flags] --yes
+                       Create a server without the wizard; gryt create --help lists the flags
+  gryt start <server>  Start a server created with gryt create or the wizard
   gryt pull <server>   Pull the newest images for a server and recreate it
   gryt pull <server> --force
                        Pull without checking whether a newer release exists
