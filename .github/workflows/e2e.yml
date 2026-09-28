@@ -1,0 +1,47 @@
+name: CLI e2e
+
+# From nothing: build gryt, create and start a server, a Playwright guest chats and
+# uploads, pull, then remove. GRYT-1565. List new workflows in discord-ci-notify.yml too.
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  schedule:
+    - cron: "17 3 * * *"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Machine
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker compose version
+
+      # No lockfile: this is the only thing in the repo that needs npm packages, and a
+      # committed one would drift the moment Playwright ships a patch.
+      - name: Browser deps
+        working-directory: e2e/browser
+        run: |
+          npm install --no-package-lock --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      - name: gryt CLI end to end
+        run: e2e/run-cli.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-out
+          path: e2e/out
