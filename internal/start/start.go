@@ -18,6 +18,14 @@ type Options struct {
 // Run starts the shared voice server first, same as the manager does, then the named
 // server. Returns the profile so a caller can print its addresses.
 func Run(ctx context.Context, out io.Writer, store *config.Store, manager runtime.Manager, opts Options) (config.Profile, error) {
+	// Before the shared file is written, so MinIO goes once the last server has moved off it.
+	moved, err := store.SettleAllStorage()
+	if err != nil {
+		return config.Profile{}, err
+	}
+	for _, p := range moved {
+		fmt.Fprintf(out, "%s keeps its uploads on disk now.\n", p.Name)
+	}
 	profiles, err := store.List()
 	if err != nil {
 		return config.Profile{}, err

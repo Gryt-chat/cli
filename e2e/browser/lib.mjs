@@ -55,7 +55,14 @@ export async function sendMessage(page, text) {
 
 export async function attachAndSend(page, files) {
   const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Attach file" }).click();
+  // Since client 1.13.26 attaching is + then "Attach files"; before that it was one button.
+  const plus = page.getByRole("button", { name: "Add", exact: true });
+  if (await plus.count()) {
+    await plus.click();
+    await page.getByRole("menuitem", { name: "Attach files" }).click();
+  } else {
+    await page.getByRole("button", { name: "Attach file" }).click();
+  }
   await (await chooser).setFiles(files);
   await composer(page).press("Enter");
   await agreeIfAsked(page);

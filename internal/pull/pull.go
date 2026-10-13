@@ -84,6 +84,9 @@ func runServer(ctx context.Context, out io.Writer, store *config.Store, manager 
 	// Rewritten first so the pull follows the channel this machine is on now. A server made
 	// before gryt channel beta still names the stable tag in the compose file it was given.
 	dir := store.ServerDir(profile.ID)
+	if settled, _, err := store.SettleStorage(profile); err == nil {
+		profile = settled
+	}
 	if _, err := store.WriteCompose(profile); err != nil {
 		return err
 	}
