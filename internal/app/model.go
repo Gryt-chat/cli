@@ -319,6 +319,12 @@ func (m Model) runOperation(action string, profile config.Profile) tea.Cmd {
 		var err error
 		switch action {
 		case "start":
+			if _, err := m.store.SettleAllStorage(); err != nil {
+				return operationDone{err: err, key: key}
+			}
+			if settled, _, err := m.store.SettleStorage(profile); err == nil {
+				profile = settled
+			}
 			// The SFU lives in its own project shared by every server here, so it has to
 			// be running before a server that expects to reach it comes up.
 			if _, err := m.store.WriteSharedCompose(); err != nil {
