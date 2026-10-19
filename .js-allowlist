@@ -1,0 +1,4 @@
+# A Go repo with no Node toolchain, so there's no tsc here to check these if they were TypeScript.
+scripts/check-comment-length.mjs
+e2e/browser/client.mjs
+e2e/browser/lib.mjs
